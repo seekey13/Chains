@@ -150,7 +150,8 @@ function ui.layout(model, look)
     local P = st.P;
     look = ui.normalize(look);
     -- One padding inset, and a text size for each role on the plate.
-    -- The first line is the step. The timer shares the weapon-skill row.
+    -- The timer's top inset matches its right inset. The weapon skill
+    -- starts on the bottom of the step text.
     local pad = st.S(look.pad);
     local margin_l = pad;
     local margin_r = pad;
@@ -159,12 +160,9 @@ function ui.layout(model, look)
     local num_px = st.S(look.timer);
     local tag_px = st.S(math.max(10, look.timer - 3));
     local head_gap = math.max(st.S(6), math.floor(pad * 0.4));
-    local after_title = math.max(st.S(6), math.floor(pad * 0.55));
     local bottom = math.max(st.S(8), math.floor(pad * 0.7));
     local gap = math.max(st.S(6), math.floor(pad * 0.4));
     local chip_pad = math.max(st.S(6), math.floor(pad * 0.3));
-    -- The first line is the step. It used to carry the word Chains and the timer.
-    local title_h = math.max(st.S(32), small + st.S(14));
     local radius = st.S(4);
     local close_box = st.S(21);
 
@@ -205,10 +203,12 @@ function ui.layout(model, look)
         pill_w = st.S(8) * 2 + st.measure(word, 'semi', tag_px) + st.S(6) + num_slot;
         pill_h = math.max(st.S(24), num_px + st.S(8), tag_px + st.S(8));
     end
-    -- The timer sits on the weapon-skill row, so that row has to clear the pill.
-    local pitch = math.max(st.S(24), body + st.S(8), small + st.S(10), pill_h + st.S(4));
+    -- Move mode's single line. The live step line is only as tall as its text.
+    local title_h = math.max(st.S(32), small + st.S(14));
+    local pitch = math.max(st.S(24), body + st.S(8), small + st.S(10));
 
     local step_label = nil;
+    local step_h = 0;
     local inner = 0;
     local blocks = { };
 
@@ -218,10 +218,17 @@ function ui.layout(model, look)
     else
         step_label = ('Step %d'):format(tonumber(model.step) or 0);
         local name = tostring(model.name or '');
-        inner = math.max(
-            st.measure(step_label, 'text', small),
-            st.measure(name, 'text', body) + gap + pill_w);
-        blocks[#blocks + 1] = { kind = 'skill', name = name };
+        local step_w, measured_h = st.measure(step_label, 'text', small);
+        local name_w, name_h = st.measure(name, 'text', body);
+        step_h = measured_h;
+        -- The pill hangs past the step when it is taller, so the skill
+        -- keeps clear of it on the right.
+        local name_span = name_w;
+        if (pill_h > step_h) then
+            name_span = name_w + gap + pill_w;
+        end
+        inner = math.max(step_w + gap + pill_w, name_span);
+        blocks[#blocks + 1] = { kind = 'skill', name = name, h = name_h };
 
         if (model.bound) then
             local label = ('Chainbound Lv.%d'):format(model.bound);
@@ -267,16 +274,24 @@ function ui.layout(model, look)
 
     inner = math.max(inner, st.S(220));
     local w = margin_l + inner + margin_r;
-    local h = title_h;
+    -- Live: the right inset, repeated above the step and the timer.
+    -- The weapon skill then begins with nothing between it and the step.
+    local h = (step_label ~= nil) and (margin_r + step_h) or title_h;
     if (#blocks > 0) then
-        h = h + 1 + after_title + bottom;
+        h = h + bottom;
         for _, block in ipairs(blocks) do
             if (block.kind == 'head') then
                 h = h + head_gap + head_h(block.px or small);
+            elseif (block.kind == 'skill') then
+                local below = math.max(0, math.floor((pitch - block.h) / 2));
+                h = h + block.h + below;
             else
                 h = h + pitch;
             end
         end
+    end
+    if (pill_h > 0) then
+        h = math.max(h, margin_r + pill_h + bottom);
     end
 
     local function draw_chips(dl, x, cy, list, bound, px)
@@ -310,8 +325,9 @@ function ui.layout(model, look)
         local lx = px + margin_l;
         local rx = px + w - margin_r;
         local title_cy = py + title_h / 2;
+        local step_top = py + margin_r;
         if (step_label ~= nil) then
-            st.text_mid(dl, lx, title_cy, step_label, P.text, 'text', small);
+            st.text_mid(dl, lx, step_top + step_h / 2, step_label, P.text, 'text', small);
         elseif (model.mode ~= 'live') then
             st.text_mid(dl, lx, title_cy, 'Drag to move', P.faint, 'text', small);
         end
@@ -323,10 +339,6 @@ function ui.layout(model, look)
             if (hot) then
                 st.tooltip('Close');
             end
-        end
-
-        if (#blocks > 0) then
-            dl:AddLine({ px, py + title_h }, { px + w, py + title_h }, st.u32(P.border), 1);
         end
 
         local function draw_timer(dl, cy)
@@ -345,6 +357,11 @@ function ui.layout(model, look)
             st.text_mid(dl, tx + num_slot - nw, cy, shown, P.white, 'semi', num_px);
         end
 
+        if (word ~= nil) then
+            -- Same inset above the pill as between the pill and the plate edge.
+            draw_timer(dl, step_top + pill_h / 2);
+        end
+
         local function section(x, cy, str, px)
             local title = string.upper(str);
             local spacing = math.max(1, st.S(1.2));
@@ -356,7 +373,7 @@ function ui.layout(model, look)
             end
         end
 
-        local yb = py + title_h + 1 + after_title;
+        local yb = (step_label ~= nil) and (step_top + step_h) or (py + title_h);
         for _, block in ipairs(blocks) do
             if (block.kind == 'head') then
                 local hh = head_h(block.px or small);
@@ -365,13 +382,14 @@ function ui.layout(model, look)
                 yb = yb + hh;
             else
                 local cy = yb + pitch / 2;
+                local advance = pitch;
                 if (block.kind == 'hint') then
                     st.text_mid(dl, lx, cy, block.text, P.faint, 'text', small);
                 elseif (block.kind == 'skill') then
+                    local nh = block.h;
+                    cy = yb + nh / 2;
+                    advance = nh + math.max(0, math.floor((pitch - nh) / 2));
                     st.text_mid(dl, lx, cy, block.name, P.text, 'text', body);
-                    if (word ~= nil) then
-                        draw_timer(dl, cy);
-                    end
                 elseif (block.kind == 'bound') then
                     draw_chips(dl, lx, cy, { block.text }, true, small);
                 elseif (block.kind == 'chips') then
@@ -385,7 +403,7 @@ function ui.layout(model, look)
                     st.text_mid(dl, prop_x - gap - block.lv_w, cy, lv, P.dim, 'text', small);
                     st.text_mid(dl, prop_x, cy, prop, prop_hex(prop, model.color), 'text', body);
                 end
-                yb = yb + pitch;
+                yb = yb + advance;
             end
         end
         return closed;
