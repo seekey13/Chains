@@ -8,13 +8,16 @@ Displays a panel with the skillchain resonating on the current target, the windo
 Chains is based on the skillchains addon by Ivaar for Ashita-v3. It has mostly been recoded for Ashita-v4 while maintaining the same functionality.
 
 ### Commands
-The following commands may be used to adjust the window position.
 
-    /chains visible       -- displays text box - click and drag it to desired location
+    /chains               -- open the layout panel. It shows a sample chain and steppers for padding and for the title, timer, body, and small text.
+
+The following commands may still be used to adjust the window.
+
+    /chains visible       -- displays the plate with nothing on it, so it can be dragged
 
     /chains move <x> <y>  -- reposition the window to the defined x, y coordinates
 
-    /chains scale <value> -- panel scale, 0.5 to 3. 1 follows the screen the way the Vanacore window does
+    /chains scale <value> -- set title, timer, body, and small text together, 0.5 to 3
 
 The following commands toggle the display information.
 

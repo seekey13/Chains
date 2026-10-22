@@ -11,6 +11,53 @@
 
 local ui = { };
 local vana = require('lib.vana');
+local imgui = require('imgui');
+
+-- Unscaled pixels. lo, hi, default. The screen scale is applied later by S().
+local LIMITS = {
+    pad   = { 8,  48, 18 },
+    title = { 11, 32, 16 },
+    timer = { 11, 32, 16 },
+    body  = { 11, 28, 16 },
+    small = { 10, 24, 13 },
+};
+
+--[[
+* Fill any missing size and clamp the rest. scale multiplies the defaults
+* the first time a key is absent, which is how an old /chains scale carries
+* over. Later edits from the panel are left alone.
+--]]
+function ui.normalize(look, scale)
+    if (type(look) ~= 'table') then
+        look = { };
+    end
+    scale = tonumber(scale) or 1;
+    if (scale ~= scale) then
+        scale = 1;
+    end
+    for key, lim in pairs(LIMITS) do
+        local v = tonumber(look[key]);
+        if (v == nil or v ~= v) then
+            v = lim[3] * scale;
+        end
+        look[key] = math.max(lim[1], math.min(lim[2], math.floor(v + 0.5)));
+    end
+    return look;
+end
+
+local SAMPLE = {
+    mode = 'live',
+    status = 'go',
+    seconds = 8,
+    step = 2,
+    name = 'Savage Blade',
+    props = { 'Fusion' },
+    burst = { 'Fire', 'Light' },
+    next = {
+        { name = 'Full Break', level = 3, prop = 'Light' },
+        { name = 'Circle Blade', level = 2, prop = 'Distortion' },
+    },
+};
 
 -- The skillchain palette (Sammeh), as '#RRGGBB'.
 local RAW = {
@@ -92,30 +139,36 @@ end
 *   next     { name, level, prop } highest level first, or nil when closed
 *   color    property hues on
 *
+* look is the size table from settings: pad, title, timer, body, small,
+* in unscaled pixels. Nil uses the defaults.
+*
 * Returns { w, h, paint(dl, x, y) -> closed }. w and h include the shadow
 * the plate throws, so the window is that size and the plate sits inside it.
 --]]
-function ui.layout(model)
+function ui.layout(model, look)
     local st = vana;
     local P = st.P;
-    -- Settings panel: 24 in from the left, 18 from the right, a 44px title
-    -- bar, 14 under the last row. Rows are the warp list's pitch.
-    local margin_l = st.S(24);
-    local margin_r = st.S(18);
-    local title_h = st.S(44);
-    local title_px = st.S(st.BODY);
-    local body = title_px;
-    local small = st.S(st.SMALL);
-    local pitch = math.max(st.S(24), body + st.S(8));
-    local head_gap = st.S(8);
-    local head_h = st.S(26);
-    local after_title = st.S(10);
-    local bottom = st.S(14);
-    local gap = st.S(8);
-    local num_px = st.S(st.BODY);
-    local tag_px = st.S(st.SMALL);
-    local chip_h = st.S(20);
-    local chip_pad = st.S(7);
+    look = ui.normalize(look);
+    -- One padding inset, and a text size for each role on the plate.
+    -- The warp list's pitch still floors the rows, and the title bar
+    -- stays at least the settings panel's 44.
+    local pad = st.S(look.pad);
+    local margin_l = pad;
+    local margin_r = pad;
+    local title_px = st.S(look.title);
+    local body = st.S(look.body);
+    local small = st.S(look.small);
+    local num_px = st.S(look.timer);
+    local tag_px = st.S(math.max(10, look.timer - 3));
+    local pitch = math.max(st.S(24), body + st.S(8), small + st.S(10));
+    local head_gap = math.max(st.S(6), math.floor(pad * 0.4));
+    local head_h = math.max(st.S(26), small + st.S(10));
+    local after_title = math.max(st.S(6), math.floor(pad * 0.55));
+    local bottom = math.max(st.S(8), math.floor(pad * 0.7));
+    local gap = math.max(st.S(6), math.floor(pad * 0.4));
+    local chip_h = math.max(st.S(20), small + st.S(6));
+    local chip_pad = math.max(st.S(6), math.floor(pad * 0.3));
+    local title_h = math.max(st.S(44), title_px + st.S(18), num_px + st.S(16));
     local radius = st.S(4);
     local close_box = st.S(21);
 
@@ -254,7 +307,7 @@ function ui.layout(model)
             local hex = (model.status == 'wait' and P.rose)
                 or (model.status == 'go' and P.teal)
                 or P.amber;
-            local ph = st.S(24);
+            local ph = math.max(st.S(24), num_px + st.S(8), tag_px + st.S(8));
             local pill_y = title_cy - ph / 2;
             local pill_x = rx - pill_w;
             st.fill(dl, pill_x, pill_y, pill_w, ph, st.mix(P.well, hex, 0.22), ph / 2, 1);
@@ -275,11 +328,22 @@ function ui.layout(model)
 
         dl:AddLine({ px, py + title_h }, { px + w, py + title_h }, st.u32(P.border), 1);
 
+        local function section(x, cy, str)
+            local title = string.upper(str);
+            local spacing = math.max(1, st.S(1.2));
+            local tw = st.text_spaced(dl, x, cy, title, P.teal, 'semi_italic', small, spacing);
+            local line_x = x + tw + st.S(10);
+            local line_end = x + inner;
+            if (line_end > line_x) then
+                dl:AddLine({ line_x, cy }, { line_end, cy }, st.u32(P.teal, 0.35), 1);
+            end
+        end
+
         local yb = py + title_h + 1 + after_title;
         for _, block in ipairs(blocks) do
             if (block.kind == 'head') then
                 yb = yb + head_gap;
-                st.heading(dl, lx, yb + st.S(12), block.text, inner);
+                section(lx, yb + head_h / 2, block.text);
                 yb = yb + head_h;
             else
                 local cy = yb + pitch / 2;
@@ -309,6 +373,132 @@ function ui.layout(model)
 
     -- +2 is the shadow: 1px to either side, 2px under, none above.
     return { w = w + 2, h = h + 2, paint = paint };
+end
+
+local EDITOR_ROWS = {
+    { 'Padding', 'pad',   4 },
+    { 'Title',   'title', 2 },
+    { 'Timer',   'timer', 2 },
+    { 'Body',    'body',  2 },
+    { 'Small',   'small', 2 },
+};
+
+local function mouse_xy()
+    local ax, ay = imgui.GetMousePos();
+    if (type(ax) == 'number') then
+        return ax, ay;
+    end
+    if (type(ax) == 'table') then
+        return ax.x or ax[1], ax.y or ax[2];
+    end
+    return nil, nil;
+end
+
+--[[
+* The /chains panel: a sample chain, then a stepper for the plate's padding
+* and one for each text role. look is mutated in place. color is the
+* property-hue toggle, so the sample matches the live plate.
+*
+* paint returns closed, changed, typing.
+--]]
+function ui.editor(look, color)
+    local st = vana;
+    local P = st.P;
+    look = ui.normalize(look);
+    local sample = ui.layout({
+        mode = 'live',
+        status = SAMPLE.status,
+        seconds = SAMPLE.seconds,
+        step = SAMPLE.step,
+        name = SAMPLE.name,
+        props = SAMPLE.props,
+        burst = SAMPLE.burst,
+        next = SAMPLE.next,
+        color = color ~= false,
+    }, look);
+
+    local margin_l = st.S(24);
+    local margin_r = st.S(18);
+    local title_h = st.S(44);
+    local title_px = st.S(st.BODY);
+    local label_px = title_px;
+    local line_h = st.S(30);
+    local head_gap = st.S(8);
+    local head_h = st.S(26);
+    local bottom = st.S(14);
+    local close_box = st.S(21);
+    local ctrl_w = st.S(110);
+    local label_w = 0;
+    for _, row in ipairs(EDITOR_ROWS) do
+        label_w = math.max(label_w, st.measure(row[1], 'text', label_px));
+    end
+    local inner = math.max(label_w + st.S(18) + ctrl_w, sample.w);
+    local title_w = st.measure('Chains', 'semi', title_px);
+    local panel_w = math.max(
+        margin_l + inner + margin_r,
+        margin_l + title_w + st.S(10) + close_box + margin_r);
+    -- Title, Sample heading, the preview, Look heading, one row per stepper.
+    local panel_h = title_h + 1
+        + head_gap + head_h + sample.h + st.S(8)
+        + head_gap + head_h + line_h * #EDITOR_ROWS
+        + bottom;
+
+    local function paint(dl, x, y)
+        local px, py = x + 1, y;
+        st.plate(dl, px, py, panel_w, panel_h);
+        local lx = px + margin_l;
+        local rx = px + panel_w - margin_r;
+        local title_cy = py + title_h / 2;
+        st.title(dl, lx, title_cy, 'Chains', title_px);
+        local hit, hot = st.close('##chains_edit_x', rx - close_box / 2, title_cy, close_box, false);
+        if (hot) then
+            st.tooltip('Close');
+        end
+        dl:AddLine({ px, py + title_h }, { px + panel_w, py + title_h }, st.u32(P.border), 1);
+
+        local yb = py + title_h + 1;
+        local function heading(name)
+            yb = yb + head_gap;
+            st.heading(dl, lx, yb + st.S(12), name, rx - lx);
+            yb = yb + head_h;
+        end
+
+        heading('Sample');
+        sample.paint(dl, lx, yb);
+        yb = yb + sample.h + st.S(8);
+
+        heading('Look');
+        local mx, my = mouse_xy();
+        local win = false;
+        pcall(function ()
+            win = imgui.IsWindowHovered() and true or false;
+        end);
+        local changed, typing = false, false;
+        for _, row in ipairs(EDITOR_ROWS) do
+            local top = yb;
+            local cy = top + line_h / 2;
+            yb = yb + line_h;
+            local band = win and mx ~= nil and my ~= nil
+                and mx >= px + st.S(4) and mx < px + panel_w - st.S(4)
+                and my >= top and my < top + line_h;
+            if (band) then
+                st.fill(dl, px + st.S(4), top, panel_w - st.S(8), line_h, P.hover, st.S(3), 0.8);
+            end
+            st.label(dl, lx, cy, row[1], label_px);
+            local lim = LIMITS[row[2]];
+            local value, edited, typing_row, hot_row = st.stepper(
+                '##chains_' .. row[2], rx - ctrl_w, cy, ctrl_w,
+                look[row[2]], lim[1], lim[2], 1, row[3]);
+            if (edited) then
+                look[row[2]] = value;
+                changed = true;
+            end
+            typing = typing or typing_row;
+        end
+        return hit and true or false, changed, typing;
+    end
+
+    return { w = panel_w + 2, h = panel_h + 2, paint = paint };
 end
 
 return ui;

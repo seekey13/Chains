@@ -21,7 +21,7 @@
 
 addon.name     = 'chains';
 addon.author   = 'Sippius - Original Ashita-v3 skillchains by Ivaar';
-addon.version  = '0.9';
+addon.version  = '0.10';
 addon.desc     = 'Display current skillchain options.';
 
 require('common');
@@ -39,7 +39,17 @@ local ui = require('lib.ui');
 local default_settings = T{
     position_x = 100,
     position_y = 100,
+    editor_x = 80,
+    editor_y = 80,
     font_scale = 1.0,
+    -- Plate inset and the text size of each role, in unscaled pixels.
+    look = T{
+        pad = 18,
+        title = 16,
+        timer = 16,
+        body = 16,
+        small = 13,
+    },
     display = T{
         color = true,
         pet = true,
@@ -51,6 +61,7 @@ local default_settings = T{
 local chains = T{
     settings = settings.load(default_settings),
     visible = false,
+    editor = false,
     move = nil,
 
     debug = false,
@@ -224,11 +235,32 @@ local SkillPropNames = T{
 --=============================================================================
 -- Registers a callback for the settings to monitor for character switches.
 --=============================================================================
+-- An old /chains scale is folded into the text sizes once. After that the
+-- panel owns them.
+local function prepare_look()
+    local saved = chains.settings;
+    if (type(saved.look) ~= 'table') then
+        saved.look = { };
+    end
+    if (not saved.look.tuned) then
+        local scale = tonumber(saved.font_scale) or 1;
+        if (scale == scale and math.abs(scale - 1) > 0.001) then
+            saved.look.title = 16 * scale;
+            saved.look.timer = 16 * scale;
+            saved.look.body = 16 * scale;
+            saved.look.small = 13.5 * scale;
+        end
+        saved.look.tuned = true;
+    end
+    ui.normalize(saved.look);
+end
+
 settings.register('settings', 'settings_update', function (s)
     if (s ~= nil) then
         chains.settings = s;
     end
 
+    prepare_look();
     settings.save();
 end);
 
@@ -675,6 +707,7 @@ end
 --=============================================================================
 ashita.events.register('load', 'load_cb', function ()
     playerID = AshitaCore:GetMemoryManager():GetParty():GetMemberServerId(0);
+    prepare_look();
     -- Segoe faces, once, outside a frame. Same rule as UberMap.
     ui.bake();
 end);
@@ -999,25 +1032,40 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         end
     end
 
-    -- UI. Empty ImGui window; the plate is drawn by lib/ui.lua.
+    -- A finished edit is written once the mouse is up, not on every step
+    -- of a held chevron or every digit of a typed number.
+    if (chains.look_dirty and not imgui.IsMouseDown(0) and not chains.look_typing) then
+        chains.look_dirty = false;
+        settings.save();
+    end
+    chains.look_typing = false;
+
+    -- UI. Empty ImGui windows; the plates are drawn by lib/ui.lua.
     local targetId = AshitaCore:GetMemoryManager():GetTarget():GetServerId(0);
     local render = targetId ~= nil and targetTable[targetId] and targetTable[targetId].dur-(now-targetTable[targetId].ts) > 0;
+    local show_hud = render or chains.visible or chains.position;
+    local show_editor = chains.editor;
 
-    if render or chains.visible or chains.position then
-        ui.frame(tonumber(chains.settings.font_scale) or 1);
+    if (not show_hud and not show_editor) then
+        return;
+    end
 
+    prepare_look();
+    ui.frame(1);
+
+    local flags = bit.bor(
+        ImGuiWindowFlags_NoDecoration,
+        ImGuiWindowFlags_NoBackground,
+        ImGuiWindowFlags_NoSavedSettings,
+        ImGuiWindowFlags_NoFocusOnAppearing,
+        ImGuiWindowFlags_NoNav);
+
+    if (show_hud) then
         local model = { mode = 'move' };
         if (render) then
             model = build_model(targetId, now);
         end
-        local layout = ui.layout(model);
-
-        local flags = bit.bor(
-            ImGuiWindowFlags_NoDecoration,
-            ImGuiWindowFlags_NoBackground,
-            ImGuiWindowFlags_NoSavedSettings,
-            ImGuiWindowFlags_NoFocusOnAppearing,
-            ImGuiWindowFlags_NoNav);
+        local layout = ui.layout(model, chains.settings.look);
 
         imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
         imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
@@ -1049,6 +1097,41 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         imgui.PopStyleVar(2);
     end
 
+    if (show_editor) then
+        local editor = ui.editor(chains.settings.look, chains.settings.display.color ~= false);
+        imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+        imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+        imgui.SetNextWindowSize({ editor.w, editor.h }, ImGuiCond_Always);
+        imgui.SetNextWindowPos(
+            { chains.settings.editor_x, chains.settings.editor_y },
+            ImGuiCond_Appearing, { 0, 0 });
+        -- Once, on the way up. Asking every frame would close other panels.
+        if (not chains.editor_shown) then
+            chains.editor_shown = true;
+            imgui.SetNextWindowFocus();
+        end
+
+        if (imgui.Begin('Chains##setup', true, flags)) then
+            local wx, wy = imgui.GetWindowPos();
+            local closed, changed, typing = editor.paint(imgui.GetWindowDrawList(), wx, wy);
+            if (changed) then
+                chains.look_dirty = true;
+            end
+            if (typing) then
+                chains.look_typing = true;
+            end
+            if (closed) then
+                chains.editor = false;
+                chains.editor_shown = false;
+            end
+            chains.settings.editor_x, chains.settings.editor_y = wx, wy;
+        end
+        imgui.End();
+        imgui.PopStyleVar(2);
+    else
+        chains.editor_shown = false;
+    end
+
 end);
 
 --=============================================================================
@@ -1071,6 +1154,14 @@ ashita.events.register('command', 'command_cb', function (e)
 
     -- Block all related commands..
     e.blocked = true;
+
+    -- /chains alone opens the layout panel.
+    if (#args == 1) then
+        chains.editor = not chains.editor;
+        if (not chains.editor) then
+            chains.editor_shown = false;
+        end
+    end
 
     --========================================================================
     -- Debug
@@ -1102,11 +1193,17 @@ ashita.events.register('command', 'command_cb', function (e)
     if (#args == 3) and (args[2] == 'scale') then
         local n = args[3]:number();
         if (n ~= nil and n == n) then
-            -- The plate's own screen scale is underneath. This is the extra
-            -- multiplier, held to the same 0.5..3 range the Vanacore window uses.
             n = math.max(0.5, math.min(3, n));
             chains.settings.font_scale = n;
-            print(chat.header(addon.name):append(chat.message('Panel scale set to %s'):fmt(n)));
+            local look = chains.settings.look;
+            look.title = 16 * n;
+            look.timer = 16 * n;
+            look.body = 16 * n;
+            look.small = 13.5 * n;
+            look.tuned = true;
+            ui.normalize(look);
+            settings.save();
+            print(chat.header(addon.name):append(chat.message('Text size set to %s'):fmt(n)));
         end
     end
 
