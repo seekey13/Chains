@@ -9,7 +9,7 @@ Chains is based on the skillchains addon by Ivaar for Ashita-v3. It has mostly b
 
 ### Commands
 
-    /chains               -- open the layout panel. It shows a sample chain and steppers for padding and for the title, timer, body, and small text.
+    /chains               -- open the layout panel. It shows a sample chain and steppers for padding and for the timer, name, and header text.
 
 The following commands may still be used to adjust the window.
 
@@ -17,7 +17,7 @@ The following commands may still be used to adjust the window.
 
     /chains move <x> <y>  -- reposition the window to the defined x, y coordinates
 
-    /chains scale <value> -- set title, timer, body, and small text together, 0.5 to 3
+    /chains scale <value> -- set timer, name, and header text together, 0.5 to 3
 
 The following commands toggle the display information.
 

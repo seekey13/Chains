@@ -150,44 +150,50 @@ function ui.layout(model, look)
     local P = st.P;
     look = ui.normalize(look);
     -- One padding inset, and a text size for each role on the plate.
-    -- The warp list's pitch still floors the rows, and the title bar
-    -- stays at least the settings panel's 44.
+    -- The first line is the step. The timer shares the weapon-skill row.
     local pad = st.S(look.pad);
     local margin_l = pad;
     local margin_r = pad;
-    local title_px = st.S(look.title);
     local body = st.S(look.body);
     local small = st.S(look.small);
     local num_px = st.S(look.timer);
     local tag_px = st.S(math.max(10, look.timer - 3));
-    local pitch = math.max(st.S(24), body + st.S(8), small + st.S(10));
     local head_gap = math.max(st.S(6), math.floor(pad * 0.4));
-    local head_h = math.max(st.S(26), small + st.S(10));
     local after_title = math.max(st.S(6), math.floor(pad * 0.55));
     local bottom = math.max(st.S(8), math.floor(pad * 0.7));
     local gap = math.max(st.S(6), math.floor(pad * 0.4));
-    local chip_h = math.max(st.S(20), small + st.S(6));
     local chip_pad = math.max(st.S(6), math.floor(pad * 0.3));
-    local title_h = math.max(st.S(44), title_px + st.S(18), num_px + st.S(16));
+    -- The first line is the step. It used to carry the word Chains and the timer.
+    local title_h = math.max(st.S(32), small + st.S(14));
     local radius = st.S(4);
     local close_box = st.S(21);
 
-    local function chip_width(label)
-        return st.measure(label, 'text', small) + chip_pad * 2;
+    -- Names are the action, the follow-ups, a property such as Fusion, and
+    -- the elements listed under Burst. Section headings stay on Headers.
+    local function head_h(px)
+        return math.max(st.S(26), px + st.S(10));
     end
 
-    local function chips_width(list)
+    local function chip_h(px)
+        return math.max(st.S(20), px + st.S(6));
+    end
+
+    local function chip_width(label, px)
+        return st.measure(label, 'text', px) + chip_pad * 2;
+    end
+
+    local function chips_width(list, px)
         local w = 0;
         for i, name in ipairs(list) do
             if (i > 1) then
                 w = w + gap;
             end
-            w = w + chip_width(name);
+            w = w + chip_width(name, px);
         end
         return w;
     end
 
-    local word, secs, pill_w, num_slot = nil, 0, 0, 0;
+    local word, secs, pill_w, pill_h, num_slot = nil, 0, 0, 0, 0;
     if (model.mode == 'live' and model.status ~= nil) then
         word = (model.status == 'wait' and 'WAIT')
             or (model.status == 'go' and 'GO')
@@ -197,39 +203,39 @@ function ui.layout(model, look)
             st.measure(tostring(secs), 'semi', num_px),
             st.measure('88', 'semi', num_px));
         pill_w = st.S(8) * 2 + st.measure(word, 'semi', tag_px) + st.S(6) + num_slot;
+        pill_h = math.max(st.S(24), num_px + st.S(8), tag_px + st.S(8));
     end
+    -- The timer sits on the weapon-skill row, so that row has to clear the pill.
+    local pitch = math.max(st.S(24), body + st.S(8), small + st.S(10), pill_h + st.S(4));
 
-    local title_w = st.measure('Chains', 'semi', title_px);
-    local corner = (model.mode == 'live') and pill_w or close_box;
-    local inner = title_w + st.S(10) + corner;
+    local step_label = nil;
+    local inner = 0;
     local blocks = { };
 
     if (model.mode ~= 'live') then
         local hint = 'Drag to move';
-        inner = math.max(inner, st.measure(hint, 'text', small));
-        blocks[1] = { kind = 'hint', text = hint };
+        inner = st.measure(hint, 'text', small) + gap + close_box;
     else
-        local step = ('Step %d'):format(tonumber(model.step) or 0);
-        local step_w = st.measure(step, 'text', small);
+        step_label = ('Step %d'):format(tonumber(model.step) or 0);
         local name = tostring(model.name or '');
-        inner = math.max(inner, step_w + gap + st.measure(name, 'text', body));
-        blocks[#blocks + 1] = {
-            kind = 'step', step = step, step_w = step_w, name = name,
-        };
+        inner = math.max(
+            st.measure(step_label, 'text', small),
+            st.measure(name, 'text', body) + gap + pill_w);
+        blocks[#blocks + 1] = { kind = 'skill', name = name };
 
         if (model.bound) then
             local label = ('Chainbound Lv.%d'):format(model.bound);
-            inner = math.max(inner, chip_width(label));
+            inner = math.max(inner, chip_width(label, small));
             blocks[#blocks + 1] = { kind = 'bound', text = label };
         elseif (model.props ~= nil and #model.props > 0) then
-            inner = math.max(inner, chips_width(model.props));
-            blocks[#blocks + 1] = { kind = 'chips', list = model.props };
+            inner = math.max(inner, chips_width(model.props, body));
+            blocks[#blocks + 1] = { kind = 'chips', list = model.props, px = body };
         end
 
         if (model.burst ~= nil and #model.burst > 0) then
             blocks[#blocks + 1] = { kind = 'head', text = 'Burst' };
-            inner = math.max(inner, chips_width(model.burst));
-            blocks[#blocks + 1] = { kind = 'chips', list = model.burst };
+            inner = math.max(inner, chips_width(model.burst, body));
+            blocks[#blocks + 1] = { kind = 'chips', list = model.burst, px = body };
         end
 
         local rows = model.next;
@@ -261,30 +267,34 @@ function ui.layout(model, look)
 
     inner = math.max(inner, st.S(220));
     local w = margin_l + inner + margin_r;
-    local h = title_h + 1 + after_title + bottom;
-    for _, block in ipairs(blocks) do
-        if (block.kind == 'head') then
-            h = h + head_gap + head_h;
-        else
-            h = h + pitch;
+    local h = title_h;
+    if (#blocks > 0) then
+        h = h + 1 + after_title + bottom;
+        for _, block in ipairs(blocks) do
+            if (block.kind == 'head') then
+                h = h + head_gap + head_h(block.px or small);
+            else
+                h = h + pitch;
+            end
         end
     end
 
-    local function draw_chips(dl, x, cy, list, bound)
+    local function draw_chips(dl, x, cy, list, bound, px)
         local cursor = x;
+        local ch = chip_h(px);
         for _, name in ipairs(list) do
             local label = tostring(name);
-            local cw = chip_width(label);
-            local top = cy - chip_h / 2;
+            local cw = chip_width(label, px);
+            local top = cy - ch / 2;
             if (bound) then
-                st.fill(dl, cursor, top, cw, chip_h, P.accent_bg, radius, 1);
-                st.outline(dl, cursor, top, cw, chip_h, P.accent_lo, radius, 1);
-                st.text_mid(dl, cursor + chip_pad, cy, label, P.accent2, 'text', small);
+                st.fill(dl, cursor, top, cw, ch, P.accent_bg, radius, 1);
+                st.outline(dl, cursor, top, cw, ch, P.accent_lo, radius, 1);
+                st.text_mid(dl, cursor + chip_pad, cy, label, P.accent2, 'text', px);
             else
-                st.fill(dl, cursor, top, cw, chip_h, P.well, radius, 1);
-                st.outline(dl, cursor, top, cw, chip_h, P.well_edge, radius, 1);
+                st.fill(dl, cursor, top, cw, ch, P.well, radius, 1);
+                st.outline(dl, cursor, top, cw, ch, P.well_edge, radius, 1);
                 st.text_mid(dl, cursor + chip_pad, cy, label,
-                    prop_hex(label, model.color), 'text', small);
+                    prop_hex(label, model.color), 'text', px);
             end
             cursor = cursor + cw + gap;
         end
@@ -300,25 +310,14 @@ function ui.layout(model, look)
         local lx = px + margin_l;
         local rx = px + w - margin_r;
         local title_cy = py + title_h / 2;
-        st.title(dl, lx, title_cy, 'Chains', title_px);
+        if (step_label ~= nil) then
+            st.text_mid(dl, lx, title_cy, step_label, P.text, 'text', small);
+        elseif (model.mode ~= 'live') then
+            st.text_mid(dl, lx, title_cy, 'Drag to move', P.faint, 'text', small);
+        end
 
         local closed = false;
-        if (word ~= nil) then
-            local hex = (model.status == 'wait' and P.rose)
-                or (model.status == 'go' and P.teal)
-                or P.amber;
-            local ph = math.max(st.S(24), num_px + st.S(8), tag_px + st.S(8));
-            local pill_y = title_cy - ph / 2;
-            local pill_x = rx - pill_w;
-            st.fill(dl, pill_x, pill_y, pill_w, ph, st.mix(P.well, hex, 0.22), ph / 2, 1);
-            st.outline(dl, pill_x, pill_y, pill_w, ph, st.mix(P.well_edge, hex, 0.7), ph / 2, 1);
-            local tx = pill_x + st.S(8);
-            st.text_mid(dl, tx, title_cy, word, hex, 'semi', tag_px);
-            tx = tx + st.measure(word, 'semi', tag_px) + st.S(6);
-            local shown = tostring(secs);
-            local nw = st.measure(shown, 'semi', num_px);
-            st.text_mid(dl, tx + num_slot - nw, title_cy, shown, P.white, 'semi', num_px);
-        else
+        if (word == nil) then
             local hit, hot = st.close('##chains_x', rx - close_box / 2, title_cy, close_box, false);
             closed = hit and true or false;
             if (hot) then
@@ -326,12 +325,30 @@ function ui.layout(model, look)
             end
         end
 
-        dl:AddLine({ px, py + title_h }, { px + w, py + title_h }, st.u32(P.border), 1);
+        if (#blocks > 0) then
+            dl:AddLine({ px, py + title_h }, { px + w, py + title_h }, st.u32(P.border), 1);
+        end
 
-        local function section(x, cy, str)
+        local function draw_timer(dl, cy)
+            local hex = (model.status == 'wait' and P.rose)
+                or (model.status == 'go' and P.teal)
+                or P.amber;
+            local pill_y = cy - pill_h / 2;
+            local pill_x = rx - pill_w;
+            st.fill(dl, pill_x, pill_y, pill_w, pill_h, st.mix(P.well, hex, 0.22), pill_h / 2, 1);
+            st.outline(dl, pill_x, pill_y, pill_w, pill_h, st.mix(P.well_edge, hex, 0.7), pill_h / 2, 1);
+            local tx = pill_x + st.S(8);
+            st.text_mid(dl, tx, cy, word, hex, 'semi', tag_px);
+            tx = tx + st.measure(word, 'semi', tag_px) + st.S(6);
+            local shown = tostring(secs);
+            local nw = st.measure(shown, 'semi', num_px);
+            st.text_mid(dl, tx + num_slot - nw, cy, shown, P.white, 'semi', num_px);
+        end
+
+        local function section(x, cy, str, px)
             local title = string.upper(str);
             local spacing = math.max(1, st.S(1.2));
-            local tw = st.text_spaced(dl, x, cy, title, P.teal, 'semi_italic', small, spacing);
+            local tw = st.text_spaced(dl, x, cy, title, P.teal, 'semi_italic', px, spacing);
             local line_x = x + tw + st.S(10);
             local line_end = x + inner;
             if (line_end > line_x) then
@@ -342,20 +359,23 @@ function ui.layout(model, look)
         local yb = py + title_h + 1 + after_title;
         for _, block in ipairs(blocks) do
             if (block.kind == 'head') then
+                local hh = head_h(block.px or small);
                 yb = yb + head_gap;
-                section(lx, yb + head_h / 2, block.text);
-                yb = yb + head_h;
+                section(lx, yb + hh / 2, block.text, block.px or small);
+                yb = yb + hh;
             else
                 local cy = yb + pitch / 2;
                 if (block.kind == 'hint') then
                     st.text_mid(dl, lx, cy, block.text, P.faint, 'text', small);
-                elseif (block.kind == 'step') then
-                    st.text_mid(dl, lx, cy, block.step, P.dim, 'text', small);
-                    st.text_mid(dl, lx + block.step_w + gap, cy, block.name, P.text, 'text', body);
+                elseif (block.kind == 'skill') then
+                    st.text_mid(dl, lx, cy, block.name, P.text, 'text', body);
+                    if (word ~= nil) then
+                        draw_timer(dl, cy);
+                    end
                 elseif (block.kind == 'bound') then
-                    draw_chips(dl, lx, cy, { block.text }, true);
+                    draw_chips(dl, lx, cy, { block.text }, true, small);
                 elseif (block.kind == 'chips') then
-                    draw_chips(dl, lx, cy, block.list, false);
+                    draw_chips(dl, lx, cy, block.list, false, block.px or small);
                 elseif (block.kind == 'next') then
                     local row = block.row;
                     local prop = tostring(row.prop or '');
@@ -377,10 +397,9 @@ end
 
 local EDITOR_ROWS = {
     { 'Padding', 'pad',   4 },
-    { 'Title',   'title', 2 },
     { 'Timer',   'timer', 2 },
-    { 'Body',    'body',  2 },
-    { 'Small',   'small', 2 },
+    { 'Name',    'body',  2 },
+    { 'Headers', 'small', 2 },
 };
 
 local function mouse_xy()

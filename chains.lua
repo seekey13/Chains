@@ -47,8 +47,8 @@ local default_settings = T{
         pad = 18,
         title = 16,
         timer = 16,
-        body = 16,
-        small = 13,
+        body = 16, -- Name
+        small = 13, -- Headers
     },
     display = T{
         color = true,
