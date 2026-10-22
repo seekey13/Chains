@@ -3,7 +3,7 @@
 
 **Designed for and tested on retail.**
 
-Displays a text object containing skillchain elements resonating on current target, timer for skillchain window and a list of weapon skills that can skillchain based on the weapon you have currently equipped.
+Displays a panel with the skillchain resonating on the current target, the window timer, and the weapon skills that can continue it from the weapon you have equipped.
 
 Chains is based on the skillchains addon by Ivaar for Ashita-v3. It has mostly been recoded for Ashita-v4 while maintaining the same functionality.
 
@@ -14,7 +14,7 @@ The following commands may be used to adjust the window position.
 
     /chains move <x> <y>  -- reposition the window to the defined x, y coordinates
 
-    /chains scale <value> -- set font scale
+    /chains scale <value> -- panel scale, 0.5 to 3. 1 follows the screen the way the Vanacore window does
 
 The following commands toggle the display information.
 
@@ -28,7 +28,7 @@ The following commands toggle the display information.
 
 ### Notable features that have changed
 - Display configuration is not currently stored per job and not all options are supported.
-- Information is displayed through IMGUI instead of a font object.
+- Information is displayed on a Vanacore panel (navy plate, Segoe UI) instead of a font object. `/chains color` still turns property hues on and off.
 - BLU and SCH spells only display when the associated abilities are active.
 - Skillchains are calculated on each render cycle for the active target rather than once for each target. This allows for real time updates based on active abilities and equipped weapon at the cost of additional workload.
 - Because the addon has been recoded and logic changed, it may not act exactly the same.

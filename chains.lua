@@ -21,7 +21,7 @@
 
 addon.name     = 'chains';
 addon.author   = 'Sippius - Original Ashita-v3 skillchains by Ivaar';
-addon.version  = '0.8';
+addon.version  = '0.9';
 addon.desc     = 'Display current skillchain options.';
 
 require('common');
@@ -31,6 +31,7 @@ local imgui = require('imgui');
 local settings = require('settings');
 
 local skills = require('skills');
+local ui = require('lib.ui');
 
 --=============================================================================
 -- Addon Variables
@@ -149,32 +150,6 @@ local chainInfo = T{
     },
 };
 
--- IMGUI RGB color format {red, green, blue, alpha}
-local colors = {};           -- Color codes by Sammeh
-colors.Light =         { 1.0, 1.0, 1.0, 1.0 }; --'0xFFFFFFFF';
-colors.Dark =          { 0.0, 0.0, 0.8, 1.0 }; --'0x0000CCFF';
-colors.Ice =           { 0.0, 1.0, 1.0, 1.0 }; --'0x00FFFFFF';
-colors.Water =         { 0.0, 1.0, 1.0, 1.0 }; --'0x00FFFFFF';
-colors.Earth =         { 0.6, 0.5, 0.0, 1.0 }; --'0x997600FF';
-colors.Wind =          { 0.4, 1.0, 0.4, 1.0 }; --'0x66FF66FF';
-colors.Fire =          { 1.0, 0.0, 0.0, 1.0 }; --'0xFF0000FF';
-colors.Lightning =     { 1.0, 0.0, 1.0, 1.0 }; --'0xFF00FFFF';
-colors.Gravitation =   { 0.4, 0.2, 0.0, 1.0 }; --'0x663300FF';
-colors.Fragmentation = { 1.0, 0.6, 1.0, 1.0 }; --'0xFA9CF7FF';
-colors.Fusion =        { 1.0, 0.4, 0.4, 1.0 }; --'0xFF6666FF';
-colors.Distortion =    { 0.2, 0.6, 1.0, 1.0 }; --'0x3399FFFF';
-colors.Darkness =      colors.Dark;
-colors.Umbra =         colors.Dark;
-colors.Compression =   colors.Dark;
-colors.Radiance =      colors.Light;
-colors.Transfixion =   colors.Light;
-colors.Induration =    colors.Ice;
-colors.Reverberation = colors.Water;
-colors.Scission =      colors.Earth;
-colors.Detonation =    colors.Wind;
-colors.Liquefaction =  colors.Fire;
-colors.Impaction =     colors.Lightning;
-
 local statusID = {
     AL  = 163, -- Azure Lore
     CA  = 164, -- Chain Affinity
@@ -256,20 +231,6 @@ settings.register('settings', 'settings_update', function (s)
 
     settings.save();
 end);
-
---=============================================================================
--- Return color formatt table
----@param t string Skillchain property
----@return table
---=============================================================================
--- based on code from skillchains by Ivaar
---=============================================================================
-local function GetPropertyColor(t)
-    if chains.settings.display.color then
-        return colors[t]
-    end
-    return { 1.0, 1.0, 1.0, 1.0 };
-end
 
 --=============================================================================
 -- Return count of requested buff. Return zero if buff is not active.
@@ -545,6 +506,8 @@ local GetSkillchains = function(target)
                 local skillchain = {
                     outText = ('%-17s>> Lv.%d'):fmt(action.en, match.level),
                     outProp = match.skillchain,
+                    name = action.en,
+                    level = match.level,
                 }
                 table.insert(levelTable[match.level],skillchain);
                 break;
@@ -712,6 +675,8 @@ end
 --=============================================================================
 ashita.events.register('load', 'load_cb', function ()
     playerID = AshitaCore:GetMemoryManager():GetParty():GetMemberServerId(0);
+    -- Segoe faces, once, outside a frame. Same rule as UberMap.
+    ui.bake();
 end);
 
 --=============================================================================
@@ -937,6 +902,76 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
 end);
 
 --=============================================================================
+-- The rows the panel draws for one live chain. Same facts the old window
+-- showed: timer, step, properties or chainbound, burst elements, next moves.
+--=============================================================================
+local function copy_list(src)
+    local out = { };
+    if (type(src) ~= 'table') then
+        return out;
+    end
+    if (#src > 0) then
+        for i = 1, #src do
+            out[i] = src[i];
+        end
+        return out;
+    end
+    for _, v in pairs(src) do
+        out[#out + 1] = v;
+    end
+    return out;
+end
+
+local function build_model(targetId, now)
+    local t = targetTable[targetId];
+    local timediff = now - t.ts;
+    local remain = t.dur - timediff;
+    local status = 'burst';
+    if (not t.closed) then
+        if (timediff < (t.wait or 0)) then
+            status = 'wait';
+            remain = t.wait - timediff;
+        else
+            status = 'go';
+        end
+    end
+
+    local props = copy_list(t.property);
+    local burst = nil;
+    local primary = props[1];
+    if ((t.step or 0) > 1 and primary ~= nil and chainInfo[primary] ~= nil) then
+        burst = copy_list(chainInfo[primary].burst);
+    end
+
+    local nxt = nil;
+    if (not t.closed) then
+        nxt = { };
+        local found = GetSkillchains(t);
+        for i = 1, #found do
+            local v = found[i];
+            nxt[i] = {
+                name = v.name or v.outText,
+                level = v.level or 0,
+                prop = v.outProp,
+            };
+        end
+    end
+
+    return {
+        mode = 'live',
+        status = status,
+        seconds = remain,
+        step = t.step,
+        name = t.en,
+        bound = t.bound,
+        props = props,
+        burst = burst,
+        next = nxt,
+        color = chains.settings.display.color ~= false,
+    };
+end
+
+--=============================================================================
 -- event: d3d_present
 -- desc: Event called when the Direct3D device is presenting a scene.
 --=============================================================================
@@ -964,22 +999,29 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         end
     end
 
-    -- UI
+    -- UI. Empty ImGui window; the plate is drawn by lib/ui.lua.
     local targetId = AshitaCore:GetMemoryManager():GetTarget():GetServerId(0);
     local render = targetId ~= nil and targetTable[targetId] and targetTable[targetId].dur-(now-targetTable[targetId].ts) > 0;
 
     if render or chains.visible or chains.position then
+        ui.frame(tonumber(chains.settings.font_scale) or 1);
+
+        local model = { mode = 'move' };
+        if (render) then
+            model = build_model(targetId, now);
+        end
+        local layout = ui.layout(model);
 
         local flags = bit.bor(
             ImGuiWindowFlags_NoDecoration,
-            ImGuiWindowFlags_AlwaysAutoResize,
+            ImGuiWindowFlags_NoBackground,
             ImGuiWindowFlags_NoSavedSettings,
             ImGuiWindowFlags_NoFocusOnAppearing,
-            ImGuiWindowFlags_NoNav)
+            ImGuiWindowFlags_NoNav);
 
-        imgui.SetNextWindowBgAlpha(0.8)
-        imgui.SetNextWindowSize({ 350 * chains.settings.font_scale, -1 }, ImGuiCond_Always)
-        imgui.SetNextWindowSizeConstraints({ -1, -1 }, { FLT_MAX, FLT_MAX })
+        imgui.PushStyleVar(ImGuiStyleVar_WindowPadding, { 0, 0 });
+        imgui.PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0);
+        imgui.SetNextWindowSize({ layout.w, layout.h }, ImGuiCond_Always);
 
         if chains.position then
             imgui.SetNextWindowPos({ chains.position.x, chains.position.y }, ImGuiCond_Always, { 0, 0 });
@@ -987,90 +1029,24 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             imgui.SetNextWindowPos({ chains.settings.position_x, chains.settings.position_y }, ImGuiCond_Appearing, { 0, 0 });
         end
 
+        -- true, not nil: a nil open-flag drops the flags on this binding.
         if (imgui.Begin('chains', true, flags)) then
-
-            if render then
-                imgui.SetWindowFontScale(chains.settings.font_scale)
-
-                local timediff = now-targetTable[targetId].ts;
-                local timer = targetTable[targetId].dur-timediff;
-
-                -- Timer
-                if not targetTable[targetId].closed then
-                    if timediff < targetTable[targetId].wait then
-                        imgui.TextColored({ 1.0, 0.0, 0.0, 1.0 },('Wait  %d'):fmt(targetTable[targetId].wait-timediff));
-                    else
-                        imgui.TextColored({ 0.0, 1.0, 0.0, 1.0 },('Go!   %d'):fmt(timer));
-                    end
-                else
-                    imgui.Text(('Burst %d'):fmt(timer));
-                end
-
-                -- Step, active properties and burst element
-                imgui.Separator();
-                imgui.Text(('Step: %d >> %s'):fmt(targetTable[targetId].step, targetTable[targetId].en));
-                imgui.Text('[');
-                imgui.SameLine();
-                if targetTable[targetId].bound then
-                    imgui.Text(('Chainbound Lv.%d'):fmt(targetTable[targetId].bound));
-                else
-                    for k,v in pairs(targetTable[targetId].property) do
-                        if k > 1 then
-                            imgui.SameLine(0,0);
-                            imgui.Text(',');
-                            imgui.SameLine();
-                        end
-                        imgui.TextColored(GetPropertyColor(v),v);
-                    end
-                end
-                imgui.SameLine();
-                imgui.Text(']');
-                if targetTable[targetId].step > 1 then
-                    imgui.SameLine();
-                    imgui.Text(' (');
-                    imgui.SameLine();
-                    for k,v in pairs(chainInfo[targetTable[targetId].property[1]].burst) do
-                        if k > 1 then
-                            imgui.SameLine(0,0);
-                            imgui.Text(',');
-                            imgui.SameLine();
-                        end
-                        imgui.TextColored(GetPropertyColor(v),v);
-                    end
-                    imgui.SameLine();
-                    imgui.Text(')');
-                end
-
-                -- Available skillchains
-                imgui.Separator();
-                if not targetTable[targetId].closed then
-                    local skillchains = GetSkillchains(targetTable[targetId]);
-                    -- Build skillchains list for target if it does not exist
-                    --if not targetTable[targetId].skillchains then
-                    --    targetTable[targetId].skillchains = skillchains;
-                    --end
-                    for _,v in pairs(skillchains) do
-                        imgui.Text(v.outText);
-                        imgui.SameLine();
-                        imgui.TextColored(GetPropertyColor(v.outProp), v.outProp);
-                    end
-                end
-            elseif chains.visible then
-                imgui.SetWindowFontScale(chains.settings.font_scale)
-                imgui.Text('');
-                imgui.Text('                 --- Chains ---                 ');
-                imgui.Text('         Click and drag to move display         ');
-                imgui.Text('');
+            local wx, wy = imgui.GetWindowPos();
+            -- Non-interactive, so a drag on the plate still moves the window.
+            -- Submitted before the close mark, which has to win the click.
+            imgui.Dummy({ layout.w, layout.h });
+            if (layout.paint(imgui.GetWindowDrawList(), wx, wy)) then
+                chains.visible = false;
             end
 
             if chains.position then
                 chains.position = nil;
             end
 
-            -- store current window position
-            chains.settings.position_x, chains.settings.position_y = imgui.GetWindowPos();
+            chains.settings.position_x, chains.settings.position_y = wx, wy;
         end
         imgui.End();
+        imgui.PopStyleVar(2);
     end
 
 end);
@@ -1124,8 +1100,14 @@ ashita.events.register('command', 'command_cb', function (e)
     end
 
     if (#args == 3) and (args[2] == 'scale') then
-        chains.settings.font_scale = args[3]:number();
-        print(chat.header(addon.name):append(chat.message('Font scale set to %s'):fmt(chains.settings.font_scale)));
+        local n = args[3]:number();
+        if (n ~= nil and n == n) then
+            -- The plate's own screen scale is underneath. This is the extra
+            -- multiplier, held to the same 0.5..3 range the Vanacore window uses.
+            n = math.max(0.5, math.min(3, n));
+            chains.settings.font_scale = n;
+            print(chat.header(addon.name):append(chat.message('Panel scale set to %s'):fmt(n)));
+        end
     end
 
     if (#args == 4) and (args[2] == 'move') then
