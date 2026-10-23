@@ -4,6 +4,7 @@
 *
 * Several functions are leveraged from LuAshitacast by Thorny
 * ParseActionPacket function is leveraged from timers by The Mystic
+* The panel is the Vanacore look by Vekien.
 *
 * Chains is free software: you can redistribute it and/or modify
 * it under the terms of the GNU General Public License as published by
@@ -730,7 +731,7 @@ end
 ashita.events.register('load', 'load_cb', function ()
     playerID = AshitaCore:GetMemoryManager():GetParty():GetMemberServerId(0);
     prepare_look();
-    -- Segoe faces, once, outside a frame. Same rule as UberMap.
+    -- Segoe faces, once, outside a frame.
     ui.bake();
 end);
 

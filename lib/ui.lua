@@ -1,12 +1,7 @@
 --[[
-* Chains panel, in the Vanacore look UberMap uses for its settings panel
-* and warp list. lib/vana.lua is that look. This file only places the
-* skillchain rows on the plate.
-*
-* The title bar, margins, row pitch and teal headings are the settings
-* panel's. The list itself is as tight as the warp list. Gameplay hues stay
-* the old property colors, lightened where a dark hue would sink into the
-* navy ground. With color off, every property is body text.
+* Chains panel, drawn in the Vanacore look by Vekien.
+* Property colors stay the gameplay hues, lightened where a dark hue would
+* sink into the navy ground. With color off, every property is body text.
 --]]
 
 local ui = { };
@@ -54,7 +49,6 @@ function ui.scale_look(look, n)
 end
 
 local SAMPLE = {
-    mode = 'live',
     status = 'go',
     seconds = 8,
     step = 2,
@@ -374,23 +368,12 @@ function ui.layout(model, look)
             draw_timer(dl, step_top + pill_h / 2);
         end
 
-        local function section(x, cy, str, px)
-            local title = string.upper(str);
-            local spacing = math.max(1, st.S(1.2));
-            local tw = st.text_spaced(dl, x, cy, title, P.teal, 'semi_italic', px, spacing);
-            local line_x = x + tw + st.S(10);
-            local line_end = x + inner;
-            if (line_end > line_x) then
-                dl:AddLine({ line_x, cy }, { line_end, cy }, st.u32(P.teal, 0.35), 1);
-            end
-        end
-
         local yb = (step_label ~= nil) and (step_top + step_h) or (py + title_h);
         for _, block in ipairs(blocks) do
             if (block.kind == 'head') then
                 local hh = head_h(block.px or small);
                 yb = yb + head_gap;
-                section(lx, yb + hh / 2, block.text, block.px or small);
+                st.heading(dl, lx, yb + hh / 2, block.text, inner, block.px or small);
                 yb = yb + hh;
             else
                 local cy = yb + pitch / 2;
@@ -538,7 +521,7 @@ function ui.editor(look, color)
             end
             st.label(dl, lx, cy, row[1], label_px);
             local lim = LIMITS[row[2]];
-            local value, edited, typing_row, hot_row = st.stepper(
+            local value, edited, typing_row = st.stepper(
                 '##chains_' .. row[2], rx - ctrl_w, cy, ctrl_w,
                 look[row[2]], lim[1], lim[2], 1, row[3]);
             if (edited) then

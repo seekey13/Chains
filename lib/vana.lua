@@ -1,39 +1,17 @@
 --[[
-* Vanacore look, copied from UberMap's lib/vana.lua so Chains stands alone.
-*
-* UberMap is MIT licensed, Copyright (c) 2026 seekey13. This file is the
-* part of that module Chains draws with: the palette, type, plate, title,
-* headings, close mark and tooltip, with vana.stepper in place of its slider
-* and a size fallback for ImGui builds that bake fonts at one size. Permission
-* is granted to use, copy, modify, merge, publish, distribute, sublicense,
-* and/or sell copies of the Software, subject to the MIT conditions in
-* UberMap's LICENSE.
-*
-* The palette and the type are the /vana window's: a dark navy ground, one
-* blue accent, and Segoe UI. Sizes for the panel go through S(), which follows
-* the screen the way that window does.
-*
-* Controls are a hit target plus a drawing. ImGui still owns the stepper's
-* text field, with the palette pushed onto it.
-*
-* Sizes and colours follow Sidekick3's ui/kit.lua and ui/window.lua, which
-* are the /vana window as an Ashita addon draws it: its title bar, close mark,
-* group headings and tooltips.
+* Vanacore look by Vekien. Palette, type, and plate for the Chains panel.
 --]]
 
 local vana = { };
 
 -- One palette. Colours stay '#RRGGBB' until a draw asks for them.
 vana.P = {
-    bg = '#161822', border = '#2A2E3E', line = '#242838', hover = '#1F2334',
-    well = '#0E1017', well_edge = '#272B3C',
-    field = '#080A10', field_edge = '#3E4460', popup = '#0F1118',
+    bg = '#161822', border = '#2A2E3E', hover = '#1F2334',
+    well = '#0E1017', well_edge = '#272B3C', popup = '#0F1118',
     white = '#FFFFFF', text = '#E8EAF1', text2 = '#BDC1D0',
     dim = '#7B8095', faint = '#4E536A',
-    accent = '#7AA2F7', accent2 = '#A9C1FF', accent_lo = '#3E5CB3',
-    accent_bg = '#1B2340',
+    accent2 = '#A9C1FF', accent_lo = '#3E5CB3', accent_bg = '#1B2340',
     teal = '#5FD3B3', amber = '#E8B45C', rose = '#EE6F78',
-    knob = '#F2F3F8', off = '#2B2F42', seg = '#313752', ink = '#0B1020',
 };
 
 -- Body and small text, in unscaled pixels. S() is what a draw passes.
@@ -107,9 +85,8 @@ local measured, measured_scale, measured_n = { }, nil, 0;
 
 --[[
 * Segoe UI from Windows, baked once. Called from the load event, outside any
-* frame: the atlas is shared, and adding to it mid-frame is the crash the map's
-* font picker already guards against. A missing file leaves that face out and
-* text falls back to ImGui's own.
+* frame: the atlas is shared, and adding to it mid-frame crashes. A missing
+* file leaves that face out and text falls back to ImGui's own.
 --]]
 function vana.bake()
     if (fonts_tried) then
@@ -261,7 +238,6 @@ end
 
 --[[
 * Capitals one glyph at a time, spacing pixels apart. Returns the width.
-* dl nil only measures, which is how a heading knows where its rule starts.
 --]]
 function vana.text_spaced(dl, x, cy, str, hex, which, px, spacing, alpha)
     str = tostring(str or '');
@@ -278,9 +254,7 @@ function vana.text_spaced(dl, x, cy, str, hex, which, px, spacing, alpha)
             len = 2;
         end
         local letter = str:sub(i, i + len - 1);
-        if (dl ~= nil) then
-            vana.text_mid(dl, x, cy, letter, hex, which, px, alpha);
-        end
+        vana.text_mid(dl, x, cy, letter, hex, which, px, alpha);
         x = x + vana.measure(letter, which, px) + spacing;
         i = i + len;
     end
@@ -309,29 +283,12 @@ function vana.outline(dl, x, y, w, h, hex, radius, alpha)
     dl:AddRect({ x, y }, { x + w, y + h }, vana.u32(hex, alpha), radius or 0);
 end
 
---[[
-* A soft shadow just outside a panel: a pixel past it either side and two
-* below. dl nil uses the background list, so a window clipped to its own
-* plate still throws a shadow. A plate drawn inside another window passes that
-* window's list, or the shadow lands behind it.
---]]
+-- One pixel past either side and two below.
 function vana.shadow(x, y, w, h, dl)
-    if (dl == nil) then
-        local im = gui();
-        local ok, back = pcall(im.GetBackgroundDrawList);
-        if (ok and back ~= nil) then
-            dl = back;
-        else
-            dl = im.GetWindowDrawList();
-        end
-    end
     vana.fill(dl, x - 1, y, w + 2, h + 2, '#000000', vana.S(6), 0.35);
 end
 
---[[
-* The panel plate: shadow, ground, hairline. The shadow stays on dl, with the
-* plate, so a panel inside the map is not hidden behind the map.
---]]
+-- The panel: shadow, ground, hairline.
 function vana.plate(dl, x, y, w, h)
     local r = vana.S(5);
     vana.shadow(x, y, w, h, dl);
@@ -346,11 +303,11 @@ end
 
 --[[
 * A group's heading: spaced small capitals in teal, then a faint teal rule.
-* span is the width the rule may run to.
+* span is the width the rule may run to. px defaults to the small size.
 --]]
-function vana.heading(dl, x, cy, str, span)
+function vana.heading(dl, x, cy, str, span, px)
     local title = string.upper(str);
-    local px = vana.S(vana.SMALL);
+    px = px or vana.S(vana.SMALL);
     local spacing = math.max(1, vana.S(1.2));
     local tw = vana.text_spaced(dl, x, cy, title, vana.P.teal, 'semi_italic', px, spacing);
     local line_x = x + tw + vana.S(10);
@@ -380,15 +337,9 @@ function vana.glyph(dl, kind, cx, cy, hex, px, alpha)
     elseif (kind == 'left') then
         dl:AddLine(p(15, 5), p(8, 12), col, thickness);
         dl:AddLine(p(8, 12), p(15, 19), col, thickness);
-    elseif (kind == 'up') then
-        dl:AddLine(p(5, 15), p(12, 8), col, thickness);
-        dl:AddLine(p(12, 8), p(19, 15), col, thickness);
     elseif (kind == 'close') then
         dl:AddLine(p(6, 6), p(18, 18), col, thickness);
         dl:AddLine(p(18, 6), p(6, 18), col, thickness);
-    else
-        dl:AddLine(p(5, 9), p(12, 16), col, thickness);
-        dl:AddLine(p(12, 16), p(19, 9), col, thickness);
     end
 end
 
@@ -462,7 +413,7 @@ local step_buf, step_meta = { }, { };
 --[[
 * A sunken stepper: chevrons on the ends, the number typed in the middle.
 * A click steps by `step`, ctrl-click by `fast`, and holding repeats.
-* Returns value, changed, typing, hovered.
+* Returns value, changed, typing.
 --]]
 function vana.stepper(id, x, cy, w, value, minv, maxv, step, fast)
     local im = gui();
@@ -554,7 +505,7 @@ function vana.stepper(id, x, cy, w, value, minv, maxv, step, fast)
     local function on(v)
         return v == true or v == 1;
     end
-    local held_any, hot_any, stepped = false, false, false;
+    local stepped = false;
     local function endcap(side, dx, dir)
         local bx = x + dx;
         im.SetCursorScreenPos({ bx, y });
@@ -573,8 +524,6 @@ function vana.stepper(id, x, cy, w, value, minv, maxv, step, fast)
                      or clicked
                      or (over and win_hot and on(im.IsMouseDown(0)) and arm.at ~= nil);
         local hot = item_hot or (over and win_hot);
-        held_any = held_any or held;
-        hot_any = hot_any or hot;
         if (hot) then
             local corners = (dir < 0)
                 and (rawget(_G, 'ImDrawFlags_RoundCornersLeft')
@@ -619,8 +568,7 @@ function vana.stepper(id, x, cy, w, value, minv, maxv, step, fast)
     else
         meta.editing = typing;
     end
-    hot_any = hot_any or (not stepped and typing);
-    return value, changed, meta.editing, hot_any or held_any;
+    return value, changed, meta.editing;
 end
 
 return vana;

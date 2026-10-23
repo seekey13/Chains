@@ -31,7 +31,7 @@ The following commands toggle the display information.
 
 ### Notable features that have changed
 - Display configuration is not currently stored per job and not all options are supported.
-- Information is displayed on a Vanacore panel (navy plate, Segoe UI) instead of a font object. `/chains color` still turns property hues on and off.
+- Information is displayed on a Vanacore panel by Vekien (navy plate, Segoe UI) instead of a font object. `/chains color` still turns property hues on and off.
 - BLU and SCH spells only display when the associated abilities are active.
 - Skillchains are calculated on each render cycle for the active target rather than once for each target. This allows for real time updates based on active abilities and equipped weapon at the cost of additional workload.
 - Because the addon has been recoded and logic changed, it may not act exactly the same.
@@ -58,3 +58,5 @@ The following commands toggle the display information.
 All credit goes to Ivaar for the original skillchains implementation which was used as the template for how to accomplish the desired results and how to deal with some of the corner cases.
 
 Special thanks to Atom0s and Thorny. Many of their addons are used as examples of how to accomplish various tasks.
+
+The panel look is Vanacore's, by Vekien.
