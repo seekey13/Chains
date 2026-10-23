@@ -16,33 +16,41 @@ local imgui = require('imgui');
 -- Unscaled pixels. lo, hi, default. The screen scale is applied later by S().
 local LIMITS = {
     pad   = { 8,  48, 18 },
-    title = { 11, 32, 16 },
     timer = { 11, 32, 16 },
     body  = { 11, 28, 16 },
     small = { 10, 24, 13 },
 };
 
+-- The text roles /chains scale sets together. Padding is left alone.
+local TEXT_ROLES = { 'timer', 'body', 'small' };
+
 --[[
-* Fill any missing size and clamp the rest. scale multiplies the defaults
-* the first time a key is absent, which is how an old /chains scale carries
-* over. Later edits from the panel are left alone.
+* Fill any missing size with its default and clamp the rest to whole pixels
+* inside its limits.
 --]]
-function ui.normalize(look, scale)
+function ui.normalize(look)
     if (type(look) ~= 'table') then
         look = { };
-    end
-    scale = tonumber(scale) or 1;
-    if (scale ~= scale) then
-        scale = 1;
     end
     for key, lim in pairs(LIMITS) do
         local v = tonumber(look[key]);
         if (v == nil or v ~= v) then
-            v = lim[3] * scale;
+            v = lim[3];
         end
         look[key] = math.max(lim[1], math.min(lim[2], math.floor(v + 0.5)));
     end
     return look;
+end
+
+--[[
+* Every text role at its default times n, so n = 1 is the defaults again.
+* This is /chains scale, and how an old font_scale carries over once.
+--]]
+function ui.scale_look(look, n)
+    for _, key in ipairs(TEXT_ROLES) do
+        look[key] = LIMITS[key][3] * n;
+    end
+    return ui.normalize(look);
 end
 
 local SAMPLE = {
@@ -121,8 +129,7 @@ function ui.bake()
     vana.bake();
 end
 
-function ui.frame(user)
-    vana.user = user;
+function ui.frame()
     vana.frame();
 end
 
@@ -139,8 +146,8 @@ end
 *   next     { name, level, prop } highest level first, or nil when closed
 *   color    property hues on
 *
-* look is the size table from settings: pad, title, timer, body, small,
-* in unscaled pixels. Nil uses the defaults.
+* look is the size table from settings: pad, timer, body, small, in
+* unscaled pixels. Nil uses the defaults.
 *
 * Returns { w, h, paint(dl, x, y) -> closed }. w and h include the shadow
 * the plate throws, so the window is that size and the plate sits inside it.
@@ -196,7 +203,8 @@ function ui.layout(model, look)
         word = (model.status == 'wait' and 'WAIT')
             or (model.status == 'go' and 'GO')
             or 'BURST';
-        secs = math.max(0, math.floor((tonumber(model.seconds) or 0) + 0.5));
+        -- A countdown: 2.1s left reads 3, and 0 only once it has run out.
+        secs = math.max(0, math.ceil(tonumber(model.seconds) or 0));
         num_slot = math.max(
             st.measure(tostring(secs), 'semi', num_px),
             st.measure('88', 'semi', num_px));
@@ -276,6 +284,10 @@ function ui.layout(model, look)
     local w = margin_l + inner + margin_r;
     -- Live: the right inset, repeated above the step and the timer.
     -- The weapon skill then begins with nothing between it and the step.
+    -- Rows after it start under the pill: a large timer over small text is
+    -- taller than the step and the skill together, and would sit on the
+    -- property chips.
+    local pill_floor = (pill_h > 0) and (margin_r + pill_h) or 0;
     local h = (step_label ~= nil) and (margin_r + step_h) or title_h;
     if (#blocks > 0) then
         h = h + bottom;
@@ -284,7 +296,7 @@ function ui.layout(model, look)
                 h = h + head_gap + head_h(block.px or small);
             elseif (block.kind == 'skill') then
                 local below = math.max(0, math.floor((pitch - block.h) / 2));
-                h = h + block.h + below;
+                h = math.max(h + block.h + below, pill_floor + bottom);
             else
                 h = h + pitch;
             end
@@ -404,6 +416,9 @@ function ui.layout(model, look)
                     st.text_mid(dl, prop_x, cy, prop, prop_hex(prop, model.color), 'text', body);
                 end
                 yb = yb + advance;
+                if (block.kind == 'skill') then
+                    yb = math.max(yb, py + pill_floor);
+                end
             end
         end
         return closed;
