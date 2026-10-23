@@ -36,7 +36,7 @@ The following commands toggle the display information.
 - Skillchains are calculated on each render cycle for the active target rather than once for each target. This allows for real time updates based on active abilities and equipped weapon at the cost of additional workload.
 - Because the addon has been recoded and logic changed, it may not act exactly the same.
 
-### Noteable features that are the same
+### Notable features that are the same
 - Display format (with and without color)
 - Support for spells under Immanence, Chain Affinity and Azure Lore
 - Support for Pet and NPC weaponskills
@@ -47,13 +47,14 @@ The following commands toggle the display information.
 - Azure Lore duration is hard coded to 30 seconds (no check for relic hands)
 - Cannot detect when another player cancels their spell abilities
 - Aeonic testing is limited due to lack of weapon to test with
+- On ImGui builds before 1.92 (Ashita 4.16's libraries), text larger than 18px is scaled up from an 18px font and looks slightly soft
 
-### Possible future ehancements
+### Possible future enhancements
 - Improve display configuration and re-implement some/all of the previous options
 - Add support for element images in addition to or in place of element/property text names
 - Add support for Chain Affinity with BLU as subjob
 
 ### Acknowledgments
-All credit goes to Ivaar for the original skillchains implementation which was used as the tempalte for how to accomplish the desired results and how to deal with some of the corner cases.
+All credit goes to Ivaar for the original skillchains implementation which was used as the template for how to accomplish the desired results and how to deal with some of the corner cases.
 
 Special thanks to Atom0s and Thorny. Many of their addons are used as examples of how to accomplish various tasks.

@@ -45,7 +45,6 @@ local default_settings = T{
     -- Plate inset and the text size of each role, in unscaled pixels.
     look = T{
         pad = 18,
-        title = 16,
         timer = 16,
         body = 16, -- Name
         small = 13, -- Headers
@@ -62,7 +61,6 @@ local chains = T{
     settings = settings.load(default_settings),
     visible = false,
     editor = false,
-    move = nil,
 
     debug = false,
     forceAeonic = 0, -- set from 0 to 3
@@ -71,8 +69,15 @@ local chains = T{
 };
 
 -- store player ID
--- * capture on init
+-- * capture on init and on every zone-in (0x0A), so a character switch
+--   without an addon reload does not keep the previous character's ID
 local playerID;
+
+-- Seconds, with a fraction. os.time() only steps once a second, which put the
+-- WAIT/GO switch up to a second early. os.clock() is wall time on Windows.
+local function clock()
+    return os.clock();
+end
 
 -- store list of valid player/pet skills
 -- * capture bluskill on 0x44 packet or first GetSkillchains call
@@ -124,7 +129,7 @@ local chainInfo = T{
         Fragmentation = T{level = 3, skillchain = 'Light'},
         Gravitation   = T{level = 2, skillchain = 'Gravitation'},
     },
-    Compression = T{level = 1, burst = T{'Darkness'},
+    Compression = T{level = 1, burst = T{'Dark'},
         Transfixion = T{level = 1, skillchain = 'Transfixion'},
         Detonation  = T{level = 1, skillchain = 'Detonation'},
     },
@@ -188,6 +193,11 @@ local PetMessageTypes = T{
     317  -- 'The <player> uses .. <target> takes .. points of damage.'
 };
 
+-- Action packet categories that can open or continue a skillchain
+local ChainActionTypes = T{ 3, 4, 6, 11, 13, 14 };
+local DebugActionTypes = T{ 3, 6, 13, 14 };
+local PetJobs = T{ 'BST', 'SMN' };
+
 local ChainBuffTypes = T{
     [statusID.AL] = { duration = 30 }, -- 40 with relic hands
     [statusID.CA] = { duration = 30 },
@@ -233,28 +243,33 @@ local SkillPropNames = T{
 };
 
 --=============================================================================
--- Registers a callback for the settings to monitor for character switches.
---=============================================================================
 -- An old /chains scale is folded into the text sizes once. After that the
 -- panel owns them.
+--=============================================================================
 local function prepare_look()
     local saved = chains.settings;
-    if (type(saved.look) ~= 'table') then
-        saved.look = { };
+    -- A file written before look existed gets the defaults' own table from
+    -- the settings merge. Editing that in place would edit the defaults, and
+    -- the next character to log in would start from this one's sizes.
+    if (type(saved.look) ~= 'table' or saved.look == default_settings.look) then
+        saved.look = T{ };
+        for k, v in pairs(default_settings.look) do
+            saved.look[k] = v;
+        end
     end
     if (not saved.look.tuned) then
         local scale = tonumber(saved.font_scale) or 1;
         if (scale == scale and math.abs(scale - 1) > 0.001) then
-            saved.look.title = 16 * scale;
-            saved.look.timer = 16 * scale;
-            saved.look.body = 16 * scale;
-            saved.look.small = 13.5 * scale;
+            ui.scale_look(saved.look, scale);
         end
         saved.look.tuned = true;
     end
     ui.normalize(saved.look);
 end
 
+--=============================================================================
+-- Registers a callback for the settings to monitor for character switches.
+--=============================================================================
 settings.register('settings', 'settings_update', function (s)
     if (s ~= nil) then
         chains.settings = s;
@@ -396,10 +411,16 @@ local function GetPetskills()
 
 --=============================================================================
 -- Define blu offset data for use by GetBluskills()
+-- * nil when the signature is not found; reading through a null pointer
+--   would crash the client rather than raise a Lua error
 --=============================================================================
-  local blu = {
-    offset = ffi.cast('uint32_t*', ashita.memory.find('FFXiMain.dll', 0, 'C1E1032BC8B0018D????????????B9????????F3A55F5E5B', 10, 0))
-};
+local blu = { };
+do
+    local addr = ashita.memory.find('FFXiMain.dll', 0, 'C1E1032BC8B0018D????????????B9????????F3A55F5E5B', 10, 0);
+    if (addr ~= nil and addr ~= 0) then
+        blu.offset = ffi.cast('uint32_t*', addr);
+    end
+end
 
 --=============================================================================
 -- Returns the table of current set BLU spells.
@@ -407,8 +428,12 @@ local function GetPetskills()
 --=============================================================================
 -- based on code from blusets by Atom0s
 --=============================================================================
-function GetBluskills()
+local function GetBluskills()
     local skillTable = T{};
+
+    if (blu.offset == nil) then
+        return T{ };
+    end
 
     local ptr = ashita.memory.read_uint32(AshitaCore:GetPointerManager():Get('inventory'));
     if (ptr == 0) then
@@ -442,22 +467,26 @@ end
 ---Return action property table with aeonic property added
 ---@param action table Action information
 ---@param actor integer Actor ID
+---@param aftermath integer|nil Aftermath level, when the caller already has it
 ---@return table propertyTable Updated property table
+---@return boolean aeonic True when the aeonic property was added
 --=============================================================================
-local GetAeonicProperty = function(action, actor)
+local GetAeonicProperty = function(action, actor, aftermath)
     local propertyTable = table.copy(action.skillchain);
 
-    if action.aeonic and (action.weapon or chains.forceAeonic > 0) and actor == playerID and GetAftermathLevel()>0 then
-        local main = GetEquipment().Main;
-        local range = GetEquipment().Range;
-        local validMain = action.weapon == (main and main.Name) or chains.forceAeonic > 0;
-        local validRange = action.weapon == (range and range.Name);
-        if validMain or validRange then
+    if action.aeonic and (action.weapon or chains.forceAeonic > 0) and actor == playerID and (aftermath or GetAftermathLevel())>0 then
+        local equip = GetEquipment();
+        local weapon = action.weapon and action.weapon:lower();
+        local function holds(slot)
+            return weapon ~= nil and slot ~= nil and tostring(slot.Name):lower() == weapon;
+        end
+        if holds(equip.Main) or holds(equip.Range) or chains.forceAeonic > 0 then
             table.insert(propertyTable,1,action.aeonic);
+            return propertyTable, true;
         end
     end
 
-    return propertyTable;
+    return propertyTable, false;
 end
 
 --=============================================================================
@@ -469,6 +498,7 @@ local GetSkillchains = function(target)
     local actions = T{};
     local chainTable = T{};
     local levelTable = T{{},{},{},{}};
+    local aftermath = GetAftermathLevel();
 
     local mainJob = GetPlayer().MainJob;
     local enableSCH = mainJob == 'SCH' and ((playerTable[playerID] and playerTable[playerID][statusID.IM]) or
@@ -485,7 +515,7 @@ local GetSkillchains = function(target)
 
     -- Create petskill table if it does not already exist
     -- Will update through incoming 0xAC packets
-    if T{ 'BST', 'SMN' }:contains(mainJob) and not actionTable.petskill then
+    if PetJobs:contains(mainJob) and not actionTable.petskill then
             actionTable.petskill = GetPetskills();
     end
 
@@ -514,7 +544,7 @@ local GetSkillchains = function(target)
     for _,action in pairs(actions) do
 
         -- insert aeonic property
-        local actionProperty = GetAeonicProperty(action,playerID);
+        local actionProperty, aeonic = GetAeonicProperty(action,playerID,aftermath);
 
         -- iterate over 1st property (target property)
         for _,prop1 in pairs(target.property) do
@@ -529,14 +559,15 @@ local GetSkillchains = function(target)
             -- store first match and exit
             if match then
                 -- check for ultimate skillchain
-                local checkAeonic = chainInfo[prop1].level == 3 and (target.step + GetAftermathLevel()) >= 4;
+                -- * only the aeonic weapon's own skill makes Radiance/Umbra;
+                --   Aftermath from a mythic or empyrean weapon does not
+                local checkAeonic = aeonic and chainInfo[prop1].level == 3 and (target.step + aftermath) >= 4;
                 if checkAeonic and chainInfo[prop1]['aeonic'] then
                     match = chainInfo[prop1]['aeonic'];
                 end
 
                 -- add skillchain information to table
                 local skillchain = {
-                    outText = ('%-17s>> Lv.%d'):fmt(action.en, match.level),
                     outProp = match.skillchain,
                     name = action.en,
                     level = match.level,
@@ -555,16 +586,6 @@ local GetSkillchains = function(target)
     end
 
     return chainTable;
-end
-
---=============================================================================
--- Reset stored skillchain lists for each active target
--- This would trigger on weapon, ability and pet changes
---=============================================================================
-local function ResetSkillchains()
-    for _,v in pairs(targetTable) do
-        v.skillchains = nil;
-    end
 end
 
 --=============================================================================
@@ -596,8 +617,9 @@ local function isPetInAlliance(id)
     for i = 0, 17 do
         if pParty:GetMemberIsActive(i) == 1 then
             local playerIndex = pParty:GetMemberTargetIndex(i);
-            local petIndex = pEntity:GetPetTargetIndex(playerIndex);
-            if pEntity:GetServerId(petIndex) == id then
+            -- Index 0 is a member out of zone, or one without a pet
+            local petIndex = (playerIndex ~= 0) and pEntity:GetPetTargetIndex(playerIndex) or 0;
+            if petIndex ~= 0 and pEntity:GetServerId(petIndex) == id then
                 return true;
             end
         end
@@ -627,7 +649,7 @@ end
 -- https://github.com/Windower/Lua/blob/dev/addons/libs/packets/data.lua
 -- https://github.com/Windower/Lua/blob/dev/addons/libs/packets/fields.lua
 --=============================================================================
-function ParseActionPacket(e)
+local function ParseActionPacket(e)
     local bitData;
     local bitOffset;
     local maxLength = e.size * 8;
@@ -759,8 +781,8 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
     if e.id == 0x28 then
 
         -- Save a little bit of processing for packets that won't relate to SC..
-        local type = ashita.bits.unpack_be(e.data_raw, 82, 4); -- byte: 0xA, bit: 0x2
-        if not T{ 3, 4, 6, 11, 13, 14 }:contains(type) then
+        local actionType = ashita.bits.unpack_be(e.data_raw, 82, 4); -- byte: 0xA, bit: 0x2
+        if not ChainActionTypes:contains(actionType) then
             return;
         end
 
@@ -776,6 +798,9 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         end
 
         local targetAction = target.Actions[1];
+        if not targetAction then
+            return;
+        end
 
         -- Overload packet type for pet actions (?)
         -- Prevents Weapon Bash from matching as an actionSkill
@@ -786,20 +811,18 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         local effectProperty = targetAction.AdditionalEffect and SkillPropNames[bit.band(targetAction.AdditionalEffect.Damage,0x3F)];
 
         --debug ===============================================================
-        if chains.debug and T{ 3, 6, 13, 14 }:contains(actionPacket.Type) then
+        if chains.debug and DebugActionTypes:contains(actionPacket.Type) then
             local out = ('Type: %s -> %s, Id: %s'):fmt(actionPacket.Type, category, actionPacket.Id);
             if actionSkill then
                 out = out .. (' Skill: %s'):fmt(actionSkill.en);
             end
             print(chat.header('0x28'):append(chat.error(out)));
-            if targetAction then
-                out = ('Action Message: %s'):fmt(targetAction.Message);
-                if targetAction.AdditionalEffect then
-                    out = out .. (' Effect: %s'):fmt(targetAction.AdditionalEffect.Damage);
-                end
-                if effectProperty then
-                    out = out .. (' Property: %s'):fmt(effectProperty);
-                end
+            out = ('Action Message: %s'):fmt(targetAction.Message);
+            if targetAction.AdditionalEffect then
+                out = out .. (' Effect: %s'):fmt(targetAction.AdditionalEffect.Damage);
+            end
+            if effectProperty then
+                out = out .. (' Property: %s'):fmt(effectProperty);
             end
             print(chat.header('0x28'):append(chat.error(out)));
         end
@@ -825,7 +848,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             targetTable[target.Id] = {
                 en=actionSkill.en,
                 property={effectProperty},
-                ts=os.time(),
+                ts=clock(),
                 dur=8-step+delay,
                 wait=delay,
                 step=step,
@@ -840,7 +863,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             targetTable[target.Id] = {
                 en=actionSkill.en,
                 property=GetAeonicProperty(actionSkill,actor),
-                ts=os.time(),
+                ts=clock(),
                 dur=7+delay,
                 wait=delay,
                 step=1,
@@ -852,7 +875,7 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
             targetTable[target.Id] = {
                 en=actionSkill.en,
                 property=actionSkill.skillchain,
-                ts=os.time(),
+                ts=clock(),
                 dur=9,
                 wait=2,
                 step=1,
@@ -871,8 +894,13 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
         -- Capture buff information for each player
         if actionPacket.Type == 6 and ChainBuffTypes:containskey(targetAction.Param) then
             playerTable[actor] = playerTable[actor] or {};
-            playerTable[actor][targetAction.Param] = os.time() + ChainBuffTypes[targetAction.Param].duration;
+            playerTable[actor][targetAction.Param] = clock() + ChainBuffTypes[targetAction.Param].duration;
         end
+
+    -- Zone in - the packet carries the player's server ID, also after a
+    --  character switch that leaves the addon loaded
+    elseif e.id == 0x0A then
+        playerID = struct.unpack('L', e.data, 0x04 + 0x01);
 
     -- Action Message - Clear buff when getting '206 - ${target}'s ${status} effect wears off'.
     --  only works to clear local player
@@ -911,9 +939,6 @@ ashita.events.register('packet_in', 'packet_in_cb', function (e)
                 table.insert(actionTable.petskill, v);
             end
         end
-
-        -- Reset skillchains on all active targets
-        ResetSkillchains();
 
         --actionTable.lastAC = e.data:sub(5); --dedupe?
 
@@ -983,7 +1008,7 @@ local function build_model(targetId, now)
         for i = 1, #found do
             local v = found[i];
             nxt[i] = {
-                name = v.name or v.outText,
+                name = v.name,
                 level = v.level or 0,
                 prop = v.outProp,
             };
@@ -1011,7 +1036,7 @@ end
 ashita.events.register('d3d_present', 'present_cb', function ()
 
     -- Capture current time for comparison
-    local now = os.time();
+    local now = clock();
 
     -- Remove stale playerTable entries
     for pk,pv in pairs(playerTable) do
@@ -1032,10 +1057,11 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         end
     end
 
-    -- A finished edit is written once the mouse is up, not on every step
-    -- of a held chevron or every digit of a typed number.
-    if (chains.look_dirty and not imgui.IsMouseDown(0) and not chains.look_typing) then
-        chains.look_dirty = false;
+    -- A finished edit or drag is written once the mouse is up, not on every
+    -- step of a held chevron, every digit of a typed number or every pixel
+    -- of a drag.
+    if (chains.dirty and not imgui.IsMouseDown(0) and not chains.look_typing) then
+        chains.dirty = false;
         settings.save();
     end
     chains.look_typing = false;
@@ -1050,8 +1076,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
         return;
     end
 
-    prepare_look();
-    ui.frame(1);
+    ui.frame();
 
     local flags = bit.bor(
         ImGuiWindowFlags_NoDecoration,
@@ -1091,7 +1116,10 @@ ashita.events.register('d3d_present', 'present_cb', function ()
                 chains.position = nil;
             end
 
-            chains.settings.position_x, chains.settings.position_y = wx, wy;
+            if (wx ~= chains.settings.position_x or wy ~= chains.settings.position_y) then
+                chains.settings.position_x, chains.settings.position_y = wx, wy;
+                chains.dirty = true;
+            end
         end
         imgui.End();
         imgui.PopStyleVar(2);
@@ -1115,7 +1143,7 @@ ashita.events.register('d3d_present', 'present_cb', function ()
             local wx, wy = imgui.GetWindowPos();
             local closed, changed, typing = editor.paint(imgui.GetWindowDrawList(), wx, wy);
             if (changed) then
-                chains.look_dirty = true;
+                chains.dirty = true;
             end
             if (typing) then
                 chains.look_typing = true;
@@ -1124,7 +1152,10 @@ ashita.events.register('d3d_present', 'present_cb', function ()
                 chains.editor = false;
                 chains.editor_shown = false;
             end
-            chains.settings.editor_x, chains.settings.editor_y = wx, wy;
+            if (wx ~= chains.settings.editor_x or wy ~= chains.settings.editor_y) then
+                chains.settings.editor_x, chains.settings.editor_y = wx, wy;
+                chains.dirty = true;
+            end
         end
         imgui.End();
         imgui.PopStyleVar(2);
@@ -1161,58 +1192,73 @@ ashita.events.register('command', 'command_cb', function (e)
         if (not chains.editor) then
             chains.editor_shown = false;
         end
+        return;
+    end
+
+    local cmd = args[2]:lower();
+
+    -- A finite number, or nil. tonumber takes 'inf' and 'nan' on LuaJIT.
+    local function finite(s)
+        local n = tonumber(s);
+        if (n == nil or n ~= n or n == math.huge or n == -math.huge) then
+            return nil;
+        end
+        return n;
     end
 
     --========================================================================
     -- Debug
     --========================================================================
-    if (#args == 2) and (args[2] == 'debug') then
+    if (#args == 2) and (cmd == 'debug') then
         chains.debug = not chains.debug;
-        print(chat.header(addon.name):append(chat.message('%s: %s'):fmt(args[2], chains.debug and 'on' or 'off')));
+        print(chat.header(addon.name):append(chat.message('%s: %s'):fmt(cmd, chains.debug and 'on' or 'off')));
+        return;
     end
 
     --========================================================================
     -- Settings
     --========================================================================
-    if (#args == 2) and chains.settings.display:containskey(args[2]) then
-        chains.settings.display[args[2]] = not chains.settings.display[args[2]];
+    if (#args == 2) and chains.settings.display:containskey(cmd) then
+        chains.settings.display[cmd] = not chains.settings.display[cmd];
+        settings.save();
         local outText = '%sskill: %s'
-        if args[2] == 'color' then
+        if cmd == 'color' then
             outText = '%s: %s'
         end
-        print(chat.header(addon.name):append(chat.message(outText):fmt(args[2], chains.settings.display[args[2]] and 'on' or 'off')));
+        print(chat.header(addon.name):append(chat.message(outText):fmt(cmd, chains.settings.display[cmd] and 'on' or 'off')));
+        return;
     end
 
     --========================================================================
     -- Window management
     --========================================================================
-    if (#args == 2) and (args[2] == 'visible') then 
+    if (#args == 2) and (cmd == 'visible') then
         chains.visible = not chains.visible;
+        return;
     end
 
-    if (#args == 3) and (args[2] == 'scale') then
-        local n = args[3]:number();
-        if (n ~= nil and n == n) then
+    if (#args == 3) and (cmd == 'scale') then
+        local n = finite(args[3]);
+        if (n ~= nil) then
             n = math.max(0.5, math.min(3, n));
             chains.settings.font_scale = n;
             local look = chains.settings.look;
-            look.title = 16 * n;
-            look.timer = 16 * n;
-            look.body = 16 * n;
-            look.small = 13.5 * n;
+            ui.scale_look(look, n);
             look.tuned = true;
-            ui.normalize(look);
             settings.save();
             print(chat.header(addon.name):append(chat.message('Text size set to %s'):fmt(n)));
+            return;
         end
     end
 
-    if (#args == 4) and (args[2] == 'move') then
-        chains.position = {
-            x = args[3]:number(),
-            y = args[4]:number(),
-        };
-        print(chat.header(addon.name):append(chat.message('Window position set to x: %s, y: %s'):fmt(chains.position.x, chains.position.y)));
+    if (#args == 4) and (cmd == 'move') then
+        local x, y = finite(args[3]), finite(args[4]);
+        if (x ~= nil and y ~= nil) then
+            chains.position = { x = x, y = y };
+            print(chat.header(addon.name):append(chat.message('Window position set to x: %s, y: %s'):fmt(x, y)));
+            return;
+        end
     end
 
+    print(chat.header(addon.name):append(chat.message('Usage: /chains [visible | move <x> <y> | scale <0.5-3> | color | pet | spell | weapon | debug]')));
 end);

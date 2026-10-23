@@ -1,25 +1,24 @@
 --[[
 * Vanacore look, copied from UberMap's lib/vana.lua so Chains stands alone.
 *
-* UberMap is MIT licensed, Copyright (c) 2026 seekey13. This file is that
-* module plus vana.user, the /chains scale multiplier. Permission is granted
-* to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-* copies of the Software, subject to the MIT conditions in UberMap's LICENSE.
-*
-* Vanacore look for UberMap's search box, config panel, favorites widget
-* and the warp list hung off a zone point.
+* UberMap is MIT licensed, Copyright (c) 2026 seekey13. This file is the
+* part of that module Chains draws with: the palette, type, plate, title,
+* headings, close mark and tooltip, with vana.stepper in place of its slider
+* and a size fallback for ImGui builds that bake fonts at one size. Permission
+* is granted to use, copy, modify, merge, publish, distribute, sublicense,
+* and/or sell copies of the Software, subject to the MIT conditions in
+* UberMap's LICENSE.
 *
 * The palette and the type are the /vana window's: a dark navy ground, one
 * blue accent, and Segoe UI. Sizes for the panel go through S(), which follows
-* the screen the way that window does. The search box keeps the Tools and
-* Search W scales, and the map's own labels stay on the face the Font row picks.
+* the screen the way that window does.
 *
-* Controls are a hit target plus a drawing. ImGui still owns the text field,
-* the colour picker and popup lists, with the palette pushed onto them.
+* Controls are a hit target plus a drawing. ImGui still owns the stepper's
+* text field, with the palette pushed onto it.
 *
 * Sizes and colours follow Sidekick3's ui/kit.lua and ui/window.lua, which
 * are the /vana window as an Ashita addon draws it: its title bar, close mark,
-* group headings, rows, drop-down, popups and tooltips.
+* group headings and tooltips.
 --]]
 
 local vana = { };
@@ -85,18 +84,11 @@ function vana.mix(a, b, t)
 end
 
 -- 1440px tall is 1.1. Shorter screens stop at 0.75 of that ratio, taller at 1.6.
--- vana.user is /chains scale on top of that, held between 0.5 and 3.
 local scale = 1;
-vana.user = 1;
 
 function vana.scale_to(screen_h)
     local h = tonumber(screen_h) or 1080;
-    local user = tonumber(vana.user) or 1;
-    if (user ~= user or user == math.huge or user == -math.huge) then
-        user = 1;
-    end
-    user = math.max(0.5, math.min(3, user));
-    scale = math.max(0.75, math.min(1.6, h / 1440)) * 1.1 * user;
+    scale = math.max(0.75, math.min(1.6, h / 1440)) * 1.1;
 end
 
 function vana.S(n)
@@ -107,33 +99,11 @@ end
 local fonts = { ready = false };
 local fonts_tried = false;
 
+-- The size each face is baked at. A build that cannot draw a font at any
+-- size scales this one by the window instead.
+local BAKE_PX = 18;
+
 local measured, measured_scale, measured_n = { }, nil, 0;
-local anim, last_clock, frame_dt = { }, nil, 0;
-
-local function tick()
-    local now = os.clock();
-    frame_dt = last_clock and math.max(0, math.min(0.1, now - last_clock)) or 0;
-    last_clock = now;
-end
-
---[[
-* id moves towards target. A new id starts there, so a control does not
-* animate in from zero the frame it first draws. speed is how fast, and the
-* close mark uses a quicker one than a switch.
---]]
-function vana.ease(id, target, speed)
-    local v = anim[id];
-    if (v == nil) then
-        v = target;
-    else
-        v = v + (target - v) * math.min(1, frame_dt * (speed or 18));
-        if (math.abs(v - target) < 0.004) then
-            v = target;
-        end
-    end
-    anim[id] = v;
-    return v;
-end
 
 --[[
 * Segoe UI from Windows, baked once. Called from the load event, outside any
@@ -155,7 +125,7 @@ function vana.bake()
             return nil;
         end
         handle:close();
-        local ok, face = pcall(im.AddFontFromFileTTF, path, 18);
+        local ok, face = pcall(im.AddFontFromFileTTF, path, BAKE_PX);
         if (ok and face) then
             return face;
         end
@@ -168,7 +138,6 @@ function vana.bake()
     local semi = add('seguisb.ttf') or text;
     fonts.text = text;
     fonts.semi = semi;
-    fonts.bold_italic = add('segoeuiz.ttf') or semi;
     fonts.semi_italic = add('seguisbi.ttf') or semi;
     fonts.ready = true;
 end
@@ -189,14 +158,19 @@ function vana.frame()
     if (measured_scale ~= scale) then
         measured, measured_scale, measured_n = { }, scale, 0;
     end
-    tick();
 end
+
+-- The window font scale each push replaced, for its pop to put back, and the
+-- scale now set. Only used where PushFont cannot take a size.
+local scales, window_scale = { }, 1;
 
 --[[
 * Puts face `which` on the font stack at px, when Segoe loaded. False when the
 * caller should leave ImGui's own font where it is. On a build that cannot
-* draw a font at an arbitrary size, the face still goes on at the size it was
-* baked at.
+* draw a font at an arbitrary size (ImGui before 1.92), the face goes on at
+* the size it was baked at and the window's font scale makes up the rest, as
+* /chains scale did before the plate. Text past BAKE_PX is drawn from the
+* smaller bake, so it is a little soft.
 --]]
 function vana.push(which, px)
     local face = fonts[which];
@@ -208,12 +182,20 @@ function vana.push(which, px)
         im.PushFont(face, px);
     else
         im.PushFont(face);
+        scales[#scales + 1] = window_scale;
+        window_scale = math.max(0.1, (px or BAKE_PX) / BAKE_PX);
+        im.SetWindowFontScale(window_scale);
     end
     return true;
 end
 
 function vana.pop()
-    gui().PopFont();
+    local im = gui();
+    if (not DYNAMIC) then
+        window_scale = table.remove(scales) or 1;
+        im.SetWindowFontScale(window_scale);
+    end
+    im.PopFont();
 end
 
 local function text_wh(w, h)
@@ -239,20 +221,14 @@ function vana.measure(str, which, px)
     if (found) then
         return found[1], found[2];
     end
-    local im = gui();
     local w, h;
-    if (fonts.ready and face and DYNAMIC) then
-        im.PushFont(face, px);
-        w, h = text_wh(im.CalcTextSize(str));
-        im.PopFont();
-    elseif (fonts.ready and face) then
-        -- Baked at 18, and PushFont cannot take a size on this build, so
-        -- AddText draws 18. Measuring 18 is what keeps a label inside its row.
-        im.PushFont(face);
-        w, h = text_wh(im.CalcTextSize(str));
-        im.PopFont();
+    -- Measured the way text_mid draws it, through the same push, so a label
+    -- keeps inside its row on either kind of build.
+    if (vana.push(which, px)) then
+        w, h = text_wh(gui().CalcTextSize(str));
+        vana.pop();
     else
-        w, h = text_wh(im.CalcTextSize(str));
+        w, h = text_wh(gui().CalcTextSize(str));
     end
     measured[key] = { w, h };
     measured_n = measured_n + 1;
@@ -261,8 +237,7 @@ end
 
 --[[
 * Segoe's line holds a tall ascent and a descent, so text centred by its box
-* sits low. This is how far to raise it. Text a caller places by hand, off
-* CalcTextSize, takes it too.
+* sits low. This is how far to raise it.
 --]]
 local function lift(h)
     if (DYNAMIC and fonts.ready) then
@@ -270,7 +245,6 @@ local function lift(h)
     end
     return 0;
 end
-vana.lift = lift;
 
 --[[
 * str with its middle on cy. which is a face name ('text', 'semi', ...).
@@ -436,108 +410,6 @@ end
 
 local CLEAR = { 0, 0, 0, 0 };
 
---[[
-* The search box. A sunken field with two shadows under it, Segoe text, and a
-* rose cross that clears it once it has text, lightening under the pointer.
-* focus hands it the keyboard. Returns edited, hovered, active (the caret is
-* in it).
---]]
-function vana.field(id, x, y, w, h, buf, max, hint, font_px, focus)
-    local im = gui();
-    local dl = im.GetWindowDrawList();
-    local r = math.max(4, math.floor(h * 0.22 + 0.5));
-    vana.fill(dl, x, y + 2, w, h, '#000000', r, 0.30);
-    vana.fill(dl, x, y + 4, w, h, '#000000', r, 0.18);
-    vana.fill(dl, x, y, w, h, vana.P.field, r, 1);
-    vana.outline(dl, x, y, w, h, vana.P.field_edge, r, 1);
-
-    local show_x = buf[1] ~= nil and buf[1] ~= '';
-    local xw = show_x and math.floor(h * 0.9) or 0;
-    local pad = math.max(8, math.floor(h * 0.28 + 0.5));
-    local pushed = vana.push('text', font_px);
-    local text_h = font_px;
-    local ok_sz, sz = pcall(im.GetFontSize);
-    if (ok_sz and sz and sz > 0) then
-        text_h = sz;
-    end
-    local vpad = math.max(0, (h - text_h) / 2);
-
-    im.PushStyleColor(ImGuiCol_FrameBg, CLEAR);
-    im.PushStyleColor(ImGuiCol_FrameBgHovered, CLEAR);
-    im.PushStyleColor(ImGuiCol_FrameBgActive, CLEAR);
-    im.PushStyleColor(ImGuiCol_Text, vana.rgba(vana.P.text));
-    im.PushStyleColor(ImGuiCol_TextDisabled, vana.rgba(vana.P.faint));
-    im.PushStyleVar(ImGuiStyleVar_FramePadding, { pad, vpad });
-    im.PushStyleVar(ImGuiStyleVar_FrameBorderSize, 0);
-    im.SetCursorScreenPos({ x, y });
-    if (focus) then
-        im.SetKeyboardFocusHere();
-    end
-    im.SetNextItemWidth(math.max(1, w - xw));
-    local edited = im.InputTextWithHint(id, hint or '', buf, max);
-    local hovered = im.IsItemHovered();
-    local active = im.IsItemActive();
-    im.PopStyleVar(2);
-    im.PopStyleColor(5);
-    if (pushed) then
-        vana.pop();
-    end
-
-    if (show_x) then
-        local bx = x + w - xw;
-        im.SetCursorScreenPos({ bx, y });
-        if (im.InvisibleButton(id .. '.x', { xw, h })) then
-            buf[1] = '';
-            edited = true;
-        end
-        local hot = im.IsItemHovered();
-        hovered = hovered or hot;
-        local t = vana.ease(id .. '.x', hot and 1 or 0, 22);
-        vana.glyph(dl, 'close', bx + xw / 2, y + h / 2,
-                   vana.mix(vana.P.rose, '#FFA7AE', t), h * 0.42);
-    end
-    return edited == true, hovered, active;
-end
-
--- Popup lists, colour pickers and the widget's right-click menu, in the
--- palette.
-local POPUP_COLORS = {
-    { 'PopupBg', 'popup' },
-    { 'Border', 'border' },
-    { 'Text', 'text' },
-    { 'Header', 'accent_bg' },
-    { 'HeaderHovered', 'hover' },
-    { 'HeaderActive', 'accent_lo' },
-    { 'Separator', 'line' },
-    { 'FrameBg', 'well' },
-    { 'FrameBgHovered', 'well' },
-    { 'FrameBgActive', 'well' },
-};
-
---[[
-* ImGui's own popups in the palette, with the padding the panels here take
-* away. Returns the counts pop_popup takes back off.
---]]
-function vana.push_popup()
-    local im = gui();
-    for _, entry in ipairs(POPUP_COLORS) do
-        im.PushStyleColor(_G['ImGuiCol_' .. entry[1]], vana.rgba(vana.P[entry[2]]));
-    end
-    im.PushStyleVar(ImGuiStyleVar_WindowPadding, { vana.S(10), vana.S(8) });
-    im.PushStyleVar(ImGuiStyleVar_PopupRounding, vana.S(5));
-    im.PushStyleVar(ImGuiStyleVar_PopupBorderSize, 1);
-    im.PushStyleVar(ImGuiStyleVar_FramePadding, { vana.S(8), vana.S(4) });
-    im.PushStyleVar(ImGuiStyleVar_FrameRounding, vana.S(4));
-    im.PushStyleVar(ImGuiStyleVar_ItemSpacing, { vana.S(8), vana.S(6) });
-    return #POPUP_COLORS, 6;
-end
-
-function vana.pop_popup(colors, vars)
-    local im = gui();
-    im.PopStyleVar(vars or 6);
-    im.PopStyleColor(colors or #POPUP_COLORS);
-end
-
 -- Lines past n characters broken at a space, so a tooltip stays narrow.
 local function wrap_chars(s, n)
     local out = { };
@@ -583,153 +455,6 @@ function vana.tooltip(s)
     end
     im.PopStyleVar(4);
     im.PopStyleColor(#TIP_COLORS);
-end
-
---[[
-* A drop-down. shown is the closed face; body fills the list with Selectables.
-* The list is at least as wide as the box. Returns whether the list is open,
-* and whether the box is hovered.
---]]
-function vana.combo(id, x, cy, w, shown, body)
-    local im = gui();
-    local h, pad = vana.S(24), vana.S(8);
-    local y = cy - h / 2;
-    im.SetCursorScreenPos({ x, y });
-    local clicked = im.InvisibleButton(id, { w, h });
-    local hovered = im.IsItemHovered();
-    local list = id .. '.list';
-    local open = im.IsPopupOpen(list) == true;
-    local dl = im.GetWindowDrawList();
-    local r = vana.S(4);
-    vana.fill(dl, x, y, w, h, vana.P.well, r, 1);
-    vana.outline(dl, x, y, w, h, (hovered or open) and vana.P.accent_lo or vana.P.well_edge, r, 1);
-    vana.text_mid(dl, x + pad, cy, shown, vana.P.text2, 'text', vana.S(vana.SMALL + 0.5));
-    vana.glyph(dl, open and 'right' or 'down', x + w - pad - vana.S(4), cy, vana.P.dim, vana.S(11));
-    if (clicked) then
-        im.OpenPopup(list);
-        open = true;
-    end
-    -- Only while the list will actually Begin. A position nobody consumes
-    -- lands on the next window in the frame.
-    if (open) then
-        im.SetNextWindowPos({ x, y + h + vana.S(2) });
-        im.SetNextWindowSizeConstraints({ w, 0 }, { math.max(w, vana.S(360)), vana.S(420) });
-    end
-    local nc, nv = vana.push_popup();
-    if (im.BeginPopup(list)) then
-        open = true;
-        local pushed = vana.push('text', vana.S(vana.BODY - 1));
-        body();
-        if (pushed) then
-            vana.pop();
-        end
-        im.EndPopup();
-    end
-    vana.pop_popup(nc, nv);
-    return open, hovered;
-end
-
--- '#RRGGBB' of the { r, g, b, a } floats a colour picker edits.
-local function hex_of(col)
-    local function byte(f)
-        return math.floor(math.max(0, math.min(1, tonumber(f) or 0)) * 255 + 0.5);
-    end
-    return string.format('#%02X%02X%02X', byte(col[1]), byte(col[2]), byte(col[3]));
-end
-
--- What a swatch says beside its square: the hex, and how opaque when not solid.
-local function swatch_label(col)
-    local a = math.max(0, math.min(1, tonumber(col[4]) or 1));
-    if (a < 1) then
-        return string.format('%s  %d%%', hex_of(col), math.floor(a * 100 + 0.5)), a;
-    end
-    return hex_of(col), a;
-end
-
---[[
-* The most room a swatch can take: its square, the gap, and the widest label
-* any colour gives it. A panel sized by this does not change width as an
-* alpha is dragged.
---]]
-function vana.swatch_width()
-    return vana.S(16) + vana.S(7)
-           + vana.measure('#DDDDDD  100%', 'text', vana.S(vana.SMALL + 0.5));
-end
-
---[[
-* A colour swatch and its hex, the pair ending at right: a 16px rounded square
-* of the colour at its own alpha, edged faint white, or in the accent while
-* hovered or while its picker is open. A colour that is not solid says how
-* opaque it is after its hex. col is the { r, g, b, a } floats the picker
-* edits. Returns clicked, hovered.
---]]
-function vana.swatch(id, right, cy, col, open)
-    local im = gui();
-    local h, sq = vana.S(20), vana.S(16);
-    local y = cy - h / 2;
-    local px = vana.S(vana.SMALL + 0.5);
-    local hex = hex_of(col);
-    local label, a = swatch_label(col);
-    local tw = vana.measure(label, 'text', px);
-    local w = sq + vana.S(7) + tw;
-    local x = right - w;
-    im.SetCursorScreenPos({ x, y });
-    local clicked = im.InvisibleButton(id, { w, h });
-    local hovered = im.IsItemHovered();
-    local dl = im.GetWindowDrawList();
-    if (open) then
-        vana.fill(dl, x - vana.S(4), y, w + vana.S(8), h, vana.P.hover, vana.S(4), 1);
-    end
-    local lit = hovered or open;
-    vana.fill(dl, x, y + vana.S(2), sq, h - vana.S(4), hex, vana.S(3), a);
-    vana.outline(dl, x, y + vana.S(2), sq, h - vana.S(4),
-                 lit and vana.P.accent or '#FFFFFF', vana.S(3), lit and 0.8 or 0.15);
-    vana.text_mid(dl, right - tw, cy, label, vana.P.text2, 'text', px);
-    return clicked and true or false, hovered;
-end
-
---[[
-* A list row's ground. The chosen row eases in the accent's ground and a 2px
-* accent bar down its left; a row under the pointer that is not the chosen
-* one takes the hover band. Inset a pixel top and bottom, so a lit first or
-* last row leaves the panel's edge showing.
---]]
-function vana.row(dl, id, x, y, w, h, chosen, hovered)
-    local S = vana.S;
-    local t = vana.ease(id, chosen and 1 or 0, 20);
-    if (t > 0.01) then
-        vana.fill(dl, x + S(4), y + 1, w - S(8), h - 2, vana.P.accent_bg, S(3), 0.9 * t);
-        vana.fill(dl, x + S(4), y + S(5), S(2), h - S(10), vana.P.accent, S(1), t);
-    end
-    if (hovered and not chosen) then
-        vana.fill(dl, x + S(4), y + 1, w - S(8), h - 2, vana.P.hover, S(3), 0.8);
-    end
-end
-
---[[
-* A pill switch, 32 by 17. veto stands it down while something drawn over it
-* owns the cursor. Returns the value, whether it changed, hovered.
---]]
-function vana.switch(id, x, cy, on, veto)
-    local w, h = vana.S(32), vana.S(17);
-    local y = cy - h / 2;
-    local im = gui();
-    im.SetCursorScreenPos({ x, y });
-    local clicked = im.InvisibleButton(id, { w, h }) and not veto;
-    local hovered = im.IsItemHovered() and not veto;
-    if (clicked) then
-        on = not on;
-    end
-    local t = vana.ease(id, on and 1 or 0);
-    local dl = im.GetWindowDrawList();
-    vana.fill(dl, x, y, w, h, vana.mix(vana.P.off, vana.P.accent, t), h / 2, 1);
-    if (hovered) then
-        vana.fill(dl, x, y, w, h, '#FFFFFF', h / 2, 0.08);
-    end
-    local knob_r = (h - vana.S(4)) / 2;
-    local knob_x = x + vana.S(2) + knob_r + (w - vana.S(4) - knob_r * 2) * t;
-    dl:AddCircleFilled({ knob_x, cy }, knob_r, vana.u32(vana.P.knob), 24);
-    return on, clicked and true or false, hovered;
 end
 
 local step_buf, step_meta = { }, { };
